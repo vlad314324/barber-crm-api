@@ -1,0 +1,9 @@
+### Додати клієнта
+POST http://localhost:5000/api/clients
+Content-Type: application/json
+
+{
+  "name": "Влад",
+  "phone": "380500636389",
+  "email": "vladyslav.hirnyi@gmail.com"
+}
