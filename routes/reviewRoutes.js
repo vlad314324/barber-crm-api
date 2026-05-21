@@ -1,67 +1,56 @@
 const express = require('express');
-const router = express.Router();
-const Review = require('../models/Review');
+const router  = express.Router();
+const Review   = require('../models/Review');
+const Employee = require('../models/Employee');
 
-// GET all reviews
 router.get('/', async (req, res) => {
   try {
     const reviews = await Review.find()
-      .populate('client')
-      .populate('appointment')
-      .populate('employee');
+      .populate('client', 'name')
+      .populate('employee', 'name')
+      .sort({ createdAt: -1 });
     res.json(reviews);
-  } catch (err) {
-    res.status(500).send('Server Error');
-  }
+  } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// GET review by ID
-router.get('/:id', async (req, res) => {
+router.get('/employee/:employeeId', async (req, res) => {
   try {
-    const review = await Review.findById(req.params.id)
-      .populate('client')
-      .populate('appointment')
-      .populate('employee');
-    if (!review) return res.status(404).json({ msg: 'Review not found' });
-    res.json(review);
-  } catch (err) {
-    res.status(500).send('Server Error');
-  }
+    const reviews = await Review.find({ employee: req.params.employeeId })
+      .populate('client', 'name')
+      .sort({ createdAt: -1 });
+    res.json(reviews);
+  } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// POST new review
 router.post('/', async (req, res) => {
-  const { client, appointment, employee, rating, comment } = req.body;
   try {
-    const newReview = new Review({ client, appointment, employee, rating, comment });
-    const saved = await newReview.save();
-    res.json(saved);
+    const review = new Review(req.body);
+    await review.save();
+    const all = await Review.find({ employee: req.body.employee });
+    const avg = all.reduce((s, r) => s + r.rating, 0) / all.length;
+    await Employee.findByIdAndUpdate(req.body.employee, {
+      rating: Math.round(avg * 10) / 10,
+      reviewCount: all.length,
+    });
+    res.status(201).json(review);
   } catch (err) {
+    console.error(err);
     res.status(500).send('Server Error');
   }
 });
 
-// PUT update review
-router.put('/:id', async (req, res) => {
-  try {
-    const updated = await Review.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ msg: 'Review not found' });
-    res.json(updated);
-  } catch (err) {
-    res.status(500).send('Server Error');
-  }
-});
-
-// DELETE review
 router.delete('/:id', async (req, res) => {
   try {
-    const review = await Review.findById(req.params.id);
-    if (!review) return res.status(404).json({ msg: 'Review not found' });
-    await review.deleteOne();
-    res.json({ msg: 'Review removed' });
-  } catch (err) {
-    res.status(500).send('Server Error');
-  }
+    const review = await Review.findByIdAndDelete(req.params.id);
+    if (!review) return res.status(404).json({ msg: 'Відгук не знайдено' });
+    const all = await Review.find({ employee: review.employee });
+    const avg = all.length ? all.reduce((s, r) => s + r.rating, 0) / all.length : 0;
+    await Employee.findByIdAndUpdate(review.employee, {
+      rating: Math.round(avg * 10) / 10,
+      reviewCount: all.length,
+    });
+    res.json({ msg: 'Відгук видалено' });
+  } catch (err) { res.status(500).send('Server Error'); }
 });
 
 module.exports = router;
