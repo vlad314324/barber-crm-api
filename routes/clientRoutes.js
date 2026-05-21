@@ -49,6 +49,19 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET appointments by client ID
+router.get('/:id/appointments', async (req, res) => {
+  try {
+    const appointments = await Appointment.find({ client: req.params.id })
+      .populate('employee')
+      .populate('services')
+      .sort({ date: -1 });
+    res.json(appointments);
+  } catch (err) {
+    res.status(500).send('Server Error');
+  }
+});
+
 // POST create client
 router.post('/', async (req, res) => {
   const { name, phone, email, notes } = req.body;
