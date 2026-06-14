@@ -84,62 +84,111 @@ router.get('/dashboard', async (req, res) => {
 // GET /api/analytics/forecast
 router.get('/forecast', async (req, res) => {
   try {
-    const appts = await Appointment.find({ status: 'Completed' }).sort({ date: 1 });
     const now = new Date();
+    
+    // Отримуємо дату 28 днів тому (4 повні тижні), щоб відсікти старі нулі
+    const fourWeeksAgo = new Date();
+    fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
 
-    // Останні 30 днів
-    const days = {};
-    for (let i = 29; i >= 0; i--) {
+    // Беремо записи тільки за останні 4 тижні
+    const appts = await Appointment.find({ 
+      status: 'Completed',
+      date: { $gte: fourWeeksAgo }
+    }).sort({ date: 1 });
+
+    // Генеруємо масив останніх 14 днів для відображення поточної «історії» на графіку фронтенду
+    const historyDays = {};
+    for (let i = 13; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const key = d.toISOString().split('T')[0];
-      days[key] = 0;
+      historyDays[key] = 0;
     }
     appts.forEach(a => {
       const key = new Date(a.date).toISOString().split('T')[0];
-      if (days[key] !== undefined) days[key]++;
+      if (historyDays[key] !== undefined) historyDays[key]++;
     });
+    const series = Object.entries(historyDays).map(([date, count]) => ({ date, count }));
 
-    const series = Object.entries(days).map(([date, count]) => ({ date, count }));
-    const values = series.map(s => s.count);
-    const n = values.length;
+    // --- ІНТЕЛЕКТУАЛЬНИЙ ПРОГНОЗ ПО ДНЯХ ТИЖНЯ ---
+    // Створюємо карту масивів для кожного дня тижня (0 - неділя, 1 - понеділок... 6 - субота)
+    const weekdayData = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
 
-    // SMA (window=7)
-    const m = 7;
-    const sma = values.slice(-m).reduce((a, b) => a + b, 0) / m;
-
-    // Лінійна регресія МНК
-    const iBar = (n + 1) / 2;
-    const xBar = values.reduce((a, b) => a + b, 0) / n;
-    let num = 0, den = 0;
-    for (let i = 1; i <= n; i++) {
-      num += (i - iBar) * (values[i - 1] - xBar);
-      den += Math.pow(i - iBar, 2);
-    }
-    const b1 = den !== 0 ? num / den : 0;
-    const b0 = xBar - b1 * iBar;
-
-    // Прогноз на 7 днів (alpha=0.6)
-    const alpha = 0.6;
-    const forecast = Array.from({ length: 7 }, (_, k) => {
-      const reg = b0 + b1 * (n + k + 1);
-      const val = Math.max(0, Math.round(alpha * sma + (1 - alpha) * reg));
+    // За останні 4 тижні групуємо реальну кількість записів по днях тижня
+    for (let i = 27; i >= 0; i--) {
       const d = new Date(now);
-      d.setDate(d.getDate() + k + 1);
-      return {
-        date: d.toLocaleDateString('uk-UA', { weekday: 'short', day: 'numeric', month: 'short' }),
+      d.setDate(d.getDate() - i);
+      const dateKey = d.toISOString().split('T')[0];
+      const dayOfWeek = d.getDay();
+
+      // Рахуємо скільки записів було в цей конкретний календарний день
+      const count = appts.filter(a => new Date(a.date).toISOString().split('T')[0] === dateKey).length;
+      weekdayData[dayOfWeek].push(count);
+    }
+
+    const forecast = [];
+    let totalMae = 0;
+
+    // Будуємо прогноз на наступні 7 днів вперед
+    for (let k = 0; k < 7; k++) {
+      const targetDate = new Date(now);
+      targetDate.setDate(targetDate.getDate() + k + 1);
+      const targetDayOfWeek = targetDate.getDay();
+
+      // Отримуємо історичні значення саме для ЦЬОГО дня тижня (наприклад, тільки останні 4 суботи)
+      const values = weekdayData[targetDayOfWeek]; 
+      const n = values.length; // n = 4 (чотири точки)
+
+      if (n === 0) {
+        forecast.push({
+          date: targetDate.toLocaleDateString('uk-UA', { weekday: 'short', day: 'numeric', month: 'short' }),
+          predicted: 0
+        });
+        continue;
+      }
+
+      // 1. Рахуємо SMA конкретно для цього дня тижня (вікно = останні 3 тижні)
+      const smaWindow = Math.min(3, n);
+      const sma = values.slice(-smaWindow).reduce((a, b) => a + b, 0) / smaWindow;
+
+      // 2. Лінійна регресія МНК конкретно для тренду цього дня тижня
+      const iBar = (n + 1) / 2;
+      const xBar = values.reduce((a, b) => a + b, 0) / n;
+      let num = 0, den = 0;
+      for (let i = 1; i <= n; i++) {
+        num += (i - iBar) * (values[i - 1] - xBar);
+        den += Math.pow(i - iBar, 2);
+      }
+      const b1 = den !== 0 ? num / den : 0;
+      const b0 = xBar - b1 * iBar;
+
+      // Прогнозуємо наступну точку (n + 1)
+      const reg = b0 + b1 * (n + 1);
+
+      // Комбінуємо SMA та Регресію (alpha=0.4 для більшого фокусу на свіжому рості регресії)
+      const alpha = 0.4;
+      const val = Math.max(0, Math.round(alpha * sma + (1 - alpha) * reg));
+
+      forecast.push({
+        date: targetDate.toLocaleDateString('uk-UA', { weekday: 'short', day: 'numeric', month: 'short' }),
         predicted: val,
-      };
+      });
+
+      // Підраховуємо локальну похибку MAE для поточної моделі дня тижня
+      const lastVal = values[n - 1];
+      const prevReg = b0 + b1 * n;
+      const prevPred = Math.max(0, Math.round(alpha * sma + (1 - alpha) * prevReg));
+      totalMae += Math.abs(lastVal - prevPred);
+    }
+
+    const finalMae = (totalMae / 7).toFixed(2);
+
+    res.json({ 
+      series, 
+      forecast, 
+      mae: finalMae, 
+      sma: (series.reduce((s, v) => s + v.count, 0) / 14).toFixed(1) 
     });
-
-    // MAE
-    const testValues = values.slice(-6);
-    const mae = testValues.reduce((s, v, i) => {
-      const pred = Math.max(0, Math.round(alpha * sma + (1 - alpha) * (b0 + b1 * (n - 6 + i))));
-      return s + Math.abs(v - pred);
-    }, 0) / 6;
-
-    res.json({ series: series.slice(-14), forecast, mae: mae.toFixed(2), sma: sma.toFixed(1) });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server Error');
