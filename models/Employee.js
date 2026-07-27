@@ -1,5 +1,11 @@
 const mongoose = require('mongoose');
 
+const dayScheduleSchema = new mongoose.Schema({
+  isOpen: { type: Boolean, default: true },
+  from:   { type: String, default: '09:00' },
+  to:     { type: String, default: '18:00' },
+}, { _id: false });
+
 const employeeSchema = new mongoose.Schema({
   name:        { type: String, required: true },
   phone:       { type: String, required: true },
@@ -13,13 +19,13 @@ const employeeSchema = new mongoose.Schema({
   reviewCount: { type: Number, default: 0 },
   joinDate:    { type: Date, default: Date.now },
   schedule: {
-    mon: { type: String, default: '09:00-18:00' },
-    tue: { type: String, default: '09:00-18:00' },
-    wed: { type: String, default: '09:00-18:00' },
-    thu: { type: String, default: '09:00-18:00' },
-    fri: { type: String, default: '09:00-18:00' },
-    sat: { type: String, default: '10:00-16:00' },
-    sun: { type: String, default: 'Вихідний' },
+    mon: { type: dayScheduleSchema, default: () => ({ isOpen: true, from: '09:00', to: '18:00' }) },
+    tue: { type: dayScheduleSchema, default: () => ({ isOpen: true, from: '09:00', to: '18:00' }) },
+    wed: { type: dayScheduleSchema, default: () => ({ isOpen: true, from: '09:00', to: '18:00' }) },
+    thu: { type: dayScheduleSchema, default: () => ({ isOpen: true, from: '09:00', to: '18:00' }) },
+    fri: { type: dayScheduleSchema, default: () => ({ isOpen: true, from: '09:00', to: '18:00' }) },
+    sat: { type: dayScheduleSchema, default: () => ({ isOpen: true, from: '10:00', to: '16:00' }) },
+    sun: { type: dayScheduleSchema, default: () => ({ isOpen: false, from: '10:00', to: '16:00' }) },
   },
 }, { timestamps: true });
 

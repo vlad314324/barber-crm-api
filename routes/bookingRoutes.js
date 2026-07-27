@@ -5,8 +5,10 @@ const Appointment = require('../models/Appointment');
 const Employee = require('../models/Employee');
 const Service = require('../models/Service');
 const Settings = require('../models/Settings');
+const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const EMPLOYEE_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 // GET /api/booking/services
 router.get('/services', async (req, res) => {
@@ -14,7 +16,7 @@ router.get('/services', async (req, res) => {
     const services = await Service.find({ isAvailable: true });
     res.json(services);
   } catch (err) {
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'booking/services');
   }
 });
 
@@ -24,15 +26,16 @@ router.get('/employees', async (req, res) => {
     const employees = await Employee.find({ isAvailable: true, role: 'Barber' });
     res.json(employees);
   } catch (err) {
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'booking/employees');
   }
 });
 
 // GET /api/booking/available-slots?employeeId=...&date=...
 router.get('/available-slots', async (req, res) => {
   const { employeeId, date } = req.query;
-  if (!employeeId || !date) {
-    return res.status(400).json({ msg: 'employeeId і date обовязкові' });
+  const missing = firstMissingField(req.query, ['employeeId', 'date']);
+  if (missing) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
 
   try {
@@ -96,43 +99,86 @@ router.get('/available-slots', async (req, res) => {
     const availableSlots = allSlots.filter(slot => !bookedSlots.has(slot));
     res.json({ date, employeeId, availableSlots, closed: false });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'booking/available-slots');
   }
 });
 
 // POST /api/booking — створити запис
 router.post('/', async (req, res) => {
-  const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail } = req.body;
+  const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang } = req.body;
 
-  if (!employeeId || !serviceIds || !date || !startTime || !clientName || !clientPhone) {
-    return res.status(400).json({ msg: 'Заповніть всі обовязкові поля' });
+  const missing = firstMissingField(req.body, ['employeeId', 'serviceIds', 'date', 'startTime', 'clientName', 'clientPhone']);
+  if (missing) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
 
+  const preferredLang = lang === 'en' ? 'en' : 'uk';
+
   try {
+    const employee = await Employee.findById(employeeId);
+    if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+    if (!employee.isAvailable) return sendError(res, 400, ERROR_CODES.EMPLOYEE_UNAVAILABLE, 'Майстер тимчасово недоступний для запису');
+
+    const services = await Service.find({ _id: { $in: serviceIds } });
+    if (services.length !== serviceIds.length) {
+      return sendError(res, 400, ERROR_CODES.INVALID_SERVICE, 'Одну або декілька обраних послуг не знайдено');
+    }
+
+    const dateObj = new Date(date);
+    const dayKey = EMPLOYEE_DAY_KEYS[dateObj.getDay()];
+    const daySchedule = employee.schedule?.[dayKey];
+    if (!daySchedule || !daySchedule.isOpen) {
+      return sendError(res, 400, ERROR_CODES.EMPLOYEE_DAY_OFF, 'У майстра вихідний у цей день');
+    }
+
+    const totalDuration = services.reduce((sum, s) => sum + s.duration, 0);
+    const totalPrice    = services.reduce((sum, s) => sum + s.price, 0);
+
+    // Перевірка накладання з існуючими записами майстра
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const existing = await Appointment.find({
+      employee: employeeId,
+      date: { $gte: startOfDay, $lte: endOfDay },
+      status: { $nin: ['Cancelled'] },
+    });
+
+    const [startH, startM] = startTime.split(':').map(Number);
+    const newStartMin = startH * 60 + startM;
+    const newEndMin = newStartMin + totalDuration;
+
+    const hasOverlap = existing.some(apt => {
+      const [h, m] = apt.startTime.split(':').map(Number);
+      const aptStartMin = h * 60 + m;
+      const aptEndMin = aptStartMin + (apt.totalDuration || 30);
+      return newStartMin < aptEndMin && aptStartMin < newEndMin;
+    });
+    if (hasOverlap) {
+      return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
+    }
+
     const Client = require('../models/Client');
     let client = await Client.findOne({ phone: clientPhone });
     if (!client) {
       client = await Client.create({ name: clientName, phone: clientPhone, email: clientEmail || '' });
     }
 
-    const services = await Service.find({ _id: { $in: serviceIds } });
-    const totalDuration = services.reduce((sum, s) => sum + s.duration, 0);
-    const totalPrice    = services.reduce((sum, s) => sum + s.price, 0);
-
     const appointment = await Appointment.create({
       client: client._id,
       employee: employeeId,
       services: serviceIds,
-      date: new Date(date),
+      date: dateObj,
       startTime,
       totalDuration,
       totalPrice,
       status: 'Scheduled',
+      preferredLang,
     });
 
     try {
-      const employee = await Employee.findById(employeeId);
       await sendBookingConfirmation({
         clientEmail,
         clientName,
@@ -142,6 +188,7 @@ router.post('/', async (req, res) => {
         startTime,
         totalPrice,
         totalDuration,
+        lang: preferredLang,
       });
     } catch (mailErr) {
       console.error('Email не надіслано:', mailErr.message);
@@ -156,11 +203,11 @@ router.post('/', async (req, res) => {
         totalDuration,
         totalPrice,
         clientName,
+        preferredLang,
       }
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'booking/create');
   }
 });
 

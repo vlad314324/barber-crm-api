@@ -36,6 +36,13 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     enum: ['Scheduled', 'Completed', 'Cancelled', 'No-show'],
     default: 'Scheduled'
+  },
+  // Мова клієнта на момент бронювання — використовується для вибору мовного
+  // шаблону email/SMS-сповіщень (підтвердження, нагадування).
+  preferredLang: {
+    type: String,
+    enum: ['uk', 'en'],
+    default: 'uk'
   }
 });
 

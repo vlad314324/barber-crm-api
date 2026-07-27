@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Client = require('../models/Client');
 const Appointment = require('../models/Appointment');
+const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 // GET all clients — з підрахунком візитів
 router.get('/', async (req, res) => {
@@ -23,8 +24,7 @@ router.get('/', async (req, res) => {
 
     res.json(clientsWithStats);
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'clients/list');
   }
 });
 
@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const client = await Client.findById(req.params.id);
-    if (!client) return res.status(404).json({ msg: 'Клієнта не знайдено' });
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
 
     const appointments = await Appointment.find({
       client: client._id,
@@ -45,7 +45,7 @@ router.get('/:id', async (req, res) => {
       lastVisit: appointments[0]?.date || null,
     });
   } catch (err) {
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'clients/get');
   }
 });
 
@@ -58,23 +58,28 @@ router.get('/:id/appointments', async (req, res) => {
       .sort({ date: -1 });
     res.json(appointments);
   } catch (err) {
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'clients/appointments');
   }
 });
 
 // POST create client
 router.post('/', async (req, res) => {
   const { name, phone, email, notes } = req.body;
+
+  const missing = firstMissingField(req.body, ['name', 'phone', 'email']);
+  if (missing) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+
   try {
     const existing = await Client.findOne({ email });
-    if (existing) return res.status(400).json({ msg: 'Клієнт з таким email вже існує' });
+    if (existing) return sendError(res, 400, ERROR_CODES.CLIENT_EMAIL_EXISTS, 'Клієнт з таким email вже існує');
 
     const client = new Client({ name, phone, email, notes });
     await client.save();
     res.status(201).json(client);
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'clients/create');
   }
 });
 
@@ -86,10 +91,10 @@ router.put('/:id', async (req, res) => {
       req.body,
       { new: true, runValidators: true }
     );
-    if (!client) return res.status(404).json({ msg: 'Клієнта не знайдено' });
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
     res.json(client);
   } catch (err) {
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'clients/update');
   }
 });
 
@@ -97,10 +102,10 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const client = await Client.findByIdAndDelete(req.params.id);
-    if (!client) return res.status(404).json({ msg: 'Клієнта не знайдено' });
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
     res.json({ msg: 'Клієнта видалено' });
   } catch (err) {
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'clients/delete');
   }
 });
 

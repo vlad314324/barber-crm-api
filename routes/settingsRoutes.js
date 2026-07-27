@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Settings = require('../models/Settings');
 const User = require('../models/User');
-const bcrypt = require('bcryptjs');
+const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 // GET /api/settings — отримати налаштування
 router.get('/', async (req, res) => {
@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
     }
     res.json(settings);
   } catch (err) {
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'settings/get');
   }
 });
 
@@ -34,30 +34,32 @@ router.put('/', async (req, res) => {
     }
     res.json(settings);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'settings/update');
   }
 });
 
 // PUT /api/settings/change-password
 router.put('/change-password', async (req, res) => {
   const { userId, currentPassword, newPassword } = req.body;
-  if (!userId || !currentPassword || !newPassword) {
-    return res.status(400).json({ msg: 'Заповніть всі поля' });
+
+  const missing = firstMissingField(req.body, ['userId', 'currentPassword', 'newPassword']);
+  if (missing) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
   if (newPassword.length < 6) {
-    return res.status(400).json({ msg: 'Новий пароль мінімум 6 символів' });
+    return sendError(res, 400, ERROR_CODES.PASSWORD_TOO_SHORT, 'Новий пароль мінімум 6 символів');
   }
+
   try {
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ msg: 'Користувача не знайдено' });
+    if (!user) return sendError(res, 404, ERROR_CODES.USER_NOT_FOUND, 'Користувача не знайдено');
     const isMatch = await user.comparePassword(currentPassword);
-    if (!isMatch) return res.status(400).json({ msg: 'Невірний поточний пароль' });
+    if (!isMatch) return sendError(res, 400, ERROR_CODES.INVALID_CURRENT_PASSWORD, 'Невірний поточний пароль');
     user.password = newPassword;
     await user.save();
     res.json({ msg: 'Пароль успішно змінено' });
   } catch (err) {
-    res.status(500).json({ msg: 'Server Error' });
+    handleRouteError(res, err, 'settings/changePassword');
   }
 });
 

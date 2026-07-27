@@ -3,6 +3,7 @@ const router = express.Router();
 const Appointment = require('../models/Appointment');
 const Client = require('../models/Client');
 const Employee = require('../models/Employee');
+const { handleRouteError } = require('../utils/errorCodes');
 
 // GET /api/analytics/dashboard
 router.get('/dashboard', async (req, res) => {
@@ -76,8 +77,7 @@ router.get('/dashboard', async (req, res) => {
       empPerformance: empPerformance.sort((a, b) => b.revenue - a.revenue),
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'analytics/dashboard');
   }
 });
 
@@ -187,11 +187,10 @@ router.get('/forecast', async (req, res) => {
       series, 
       forecast, 
       mae: finalMae, 
-      sma: (series.reduce((s, v) => s + v.count, 0) / 14).toFixed(1) 
+      sma: (series.reduce((s, v) => s + v.count, 0) / 14).toFixed(1)
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'analytics/forecast');
   }
 });
 
@@ -253,8 +252,7 @@ router.get('/rfm', async (req, res) => {
 
     res.json({ segments: scored.slice(0, 50), summary });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server Error');
+    handleRouteError(res, err, 'analytics/rfm');
   }
 });
 
