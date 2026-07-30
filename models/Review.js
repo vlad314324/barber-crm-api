@@ -8,4 +8,4 @@ const reviewSchema = new mongoose.Schema({
   text:        { type: String, default: '' },
 }, { timestamps: true });
 
-module.exports = mongoose.model('Review', reviewSchema);
+module.exports = reviewSchema;

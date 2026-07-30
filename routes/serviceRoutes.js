@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const Service = require('../models/Service');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 router.get('/', async (req, res) => {
+  const { Service } = req.models;
   try {
     const services = await Service.find().sort({ category: 1, name: 1 });
     res.json(services);
@@ -13,6 +13,7 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
+  const { Service } = req.models;
   try {
     const service = await Service.findById(req.params.id);
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
@@ -23,6 +24,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
+  const { Service } = req.models;
   const missing = firstMissingField(req.body, ['name', 'description', 'price', 'duration', 'category']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
@@ -38,6 +40,7 @@ router.post('/', async (req, res) => {
 });
 
 router.put('/:id', async (req, res) => {
+  const { Service } = req.models;
   try {
     const service = await Service.findByIdAndUpdate(
       req.params.id, req.body, { new: true, runValidators: true }
@@ -50,6 +53,7 @@ router.put('/:id', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
+  const { Service } = req.models;
   try {
     const service = await Service.findByIdAndDelete(req.params.id);
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');

@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const Employee = require('../models/Employee');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 router.get('/', async (req, res) => {
+  const { Employee } = req.models;
   try {
     const employees = await Employee.find().sort({ createdAt: -1 });
     res.json(employees);
@@ -13,6 +13,7 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
+  const { Employee } = req.models;
   try {
     const employee = await Employee.findById(req.params.id);
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
@@ -23,6 +24,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
+  const { Employee } = req.models;
   const missing = firstMissingField(req.body, ['name', 'phone', 'email', 'role', 'hourlyRate']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
@@ -40,6 +42,7 @@ router.post('/', async (req, res) => {
 });
 
 router.put('/:id', async (req, res) => {
+  const { Employee } = req.models;
   try {
     const employee = await Employee.findByIdAndUpdate(
       req.params.id, req.body, { new: true, runValidators: true }
@@ -52,6 +55,7 @@ router.put('/:id', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
+  const { Employee } = req.models;
   try {
     const employee = await Employee.findByIdAndDelete(req.params.id);
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');

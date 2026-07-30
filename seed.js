@@ -1,16 +1,18 @@
 // Наповнення бази даних тестовими даними: користувачі, працівники, клієнти,
 // послуги, записи, відгуки та налаштування.
-// Запуск: node seed.js
+// Запуск: node seed.js --salon=<slug>
 require('dotenv').config();
-const mongoose = require('mongoose');
+const connectDB = require('./config/db');
+const Salon = require('./models/platform/Salon');
+const { getTenantContext } = require('./config/tenantDb');
 
-const User = require('./models/User');
-const Client = require('./models/Client');
-const Employee = require('./models/Employee');
-const Service = require('./models/Service');
-const Appointment = require('./models/Appointment');
-const Review = require('./models/Review');
-const Settings = require('./models/Settings');
+const slugArg = process.argv.find((a) => a.startsWith('--salon='));
+const slug = slugArg ? slugArg.split('=')[1] : null;
+
+if (!slug) {
+  console.error('Вкажіть салон: node seed.js --salon=<slug>');
+  process.exit(1);
+}
 
 const addDays = (days) => {
   const d = new Date();
@@ -20,8 +22,18 @@ const addDays = (days) => {
 };
 
 async function seed() {
-  await mongoose.connect(process.env.MONGO_URI);
-  console.log('MongoDB connected, seeding...');
+  await connectDB();
+
+  const salon = await Salon.findOne({ slug });
+  if (!salon) {
+    console.error(`Салон зі слагом "${slug}" не знайдено в реєстрі`);
+    process.exit(1);
+  }
+
+  const { models } = await getTenantContext(salon.dbName);
+  const { User, Client, Employee, Service, Appointment, Review, Settings } = models;
+
+  console.log(`Seeding salon "${salon.name}" (${salon.dbName})...`);
 
   await Promise.all([
     User.deleteMany({}),
@@ -190,7 +202,7 @@ async function seed() {
 
   // --- Settings ---
   await Settings.create({
-    shopName: 'BarberCRM',
+    shopName: salon.name,
     address: 'вул. Хрещатик, 1, Київ',
     phone: '+380441234567',
     email: 'info@barbershop.com',
@@ -202,8 +214,8 @@ async function seed() {
   console.log('  Barber: barber@barbershop.com / barber123');
   console.log('  Client: client@barbershop.com / client123');
 
-  await mongoose.disconnect();
   console.log('\nSeeding complete.');
+  process.exit(0);
 }
 
 seed().catch((err) => {

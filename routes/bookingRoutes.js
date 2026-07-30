@@ -1,17 +1,14 @@
 const express = require('express');
 const { sendBookingConfirmation } = require('../config/mailer');
 const router = express.Router();
-const Appointment = require('../models/Appointment');
-const Employee = require('../models/Employee');
-const Service = require('../models/Service');
-const Settings = require('../models/Settings');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const EMPLOYEE_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
-// GET /api/booking/services
+// GET /api/:salonSlug/booking/services
 router.get('/services', async (req, res) => {
+  const { Service } = req.models;
   try {
     const services = await Service.find({ isAvailable: true });
     res.json(services);
@@ -20,8 +17,9 @@ router.get('/services', async (req, res) => {
   }
 });
 
-// GET /api/booking/employees
+// GET /api/:salonSlug/booking/employees
 router.get('/employees', async (req, res) => {
+  const { Employee } = req.models;
   try {
     const employees = await Employee.find({ isAvailable: true, role: 'Barber' });
     res.json(employees);
@@ -30,8 +28,9 @@ router.get('/employees', async (req, res) => {
   }
 });
 
-// GET /api/booking/available-slots?employeeId=...&date=...
+// GET /api/:salonSlug/booking/available-slots?employeeId=...&date=...
 router.get('/available-slots', async (req, res) => {
+  const { Appointment, Settings } = req.models;
   const { employeeId, date } = req.query;
   const missing = firstMissingField(req.query, ['employeeId', 'date']);
   if (missing) {
@@ -103,8 +102,9 @@ router.get('/available-slots', async (req, res) => {
   }
 });
 
-// POST /api/booking — створити запис
+// POST /api/:salonSlug/booking — створити запис
 router.post('/', async (req, res) => {
+  const { Employee, Service, Appointment, Client } = req.models;
   const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang } = req.body;
 
   const missing = firstMissingField(req.body, ['employeeId', 'serviceIds', 'date', 'startTime', 'clientName', 'clientPhone']);
@@ -160,7 +160,6 @@ router.post('/', async (req, res) => {
       return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
     }
 
-    const Client = require('../models/Client');
     let client = await Client.findOne({ phone: clientPhone });
     if (!client) {
       client = await Client.create({ name: clientName, phone: clientPhone, email: clientEmail || '' });

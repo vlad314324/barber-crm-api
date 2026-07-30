@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const Settings = require('../models/Settings');
-const User = require('../models/User');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
-// GET /api/settings — отримати налаштування
+// GET /api/:salonSlug/settings — отримати налаштування
 router.get('/', async (req, res) => {
+  const { Settings } = req.models;
   try {
     let settings = await Settings.findOne();
     if (!settings) {
@@ -17,8 +16,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PUT /api/settings — оновити налаштування
+// PUT /api/:salonSlug/settings — оновити налаштування
 router.put('/', async (req, res) => {
+  const { Settings } = req.models;
   try {
     let settings = await Settings.findOne();
     if (!settings) {
@@ -38,8 +38,9 @@ router.put('/', async (req, res) => {
   }
 });
 
-// PUT /api/settings/change-password
+// PUT /api/:salonSlug/settings/change-password
 router.put('/change-password', async (req, res) => {
+  const { User } = req.models;
   const { userId, currentPassword, newPassword } = req.body;
 
   const missing = firstMissingField(req.body, ['userId', 'currentPassword', 'newPassword']);

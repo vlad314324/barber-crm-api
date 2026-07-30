@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const Client = require('../models/Client');
-const Appointment = require('../models/Appointment');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 // GET all clients — з підрахунком візитів
 router.get('/', async (req, res) => {
+  const { Client, Appointment } = req.models;
   try {
     const clients = await Client.find().sort({ createdAt: -1 });
 
@@ -30,6 +29,7 @@ router.get('/', async (req, res) => {
 
 // GET client by ID
 router.get('/:id', async (req, res) => {
+  const { Client, Appointment } = req.models;
   try {
     const client = await Client.findById(req.params.id);
     if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
@@ -51,6 +51,7 @@ router.get('/:id', async (req, res) => {
 
 // GET appointments by client ID
 router.get('/:id/appointments', async (req, res) => {
+  const { Appointment } = req.models;
   try {
     const appointments = await Appointment.find({ client: req.params.id })
       .populate('employee')
@@ -64,6 +65,7 @@ router.get('/:id/appointments', async (req, res) => {
 
 // POST create client
 router.post('/', async (req, res) => {
+  const { Client } = req.models;
   const { name, phone, email, notes } = req.body;
 
   const missing = firstMissingField(req.body, ['name', 'phone', 'email']);
@@ -85,6 +87,7 @@ router.post('/', async (req, res) => {
 
 // PUT update client
 router.put('/:id', async (req, res) => {
+  const { Client } = req.models;
   try {
     const client = await Client.findByIdAndUpdate(
       req.params.id,
@@ -100,6 +103,7 @@ router.put('/:id', async (req, res) => {
 
 // DELETE client
 router.delete('/:id', async (req, res) => {
+  const { Client } = req.models;
   try {
     const client = await Client.findByIdAndDelete(req.params.id);
     if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');

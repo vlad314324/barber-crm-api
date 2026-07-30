@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const Appointment = require('../models/Appointment');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 // GET all appointments
 router.get('/', async (req, res) => {
+  const { Appointment } = req.models;
   try {
     const appointments = await Appointment.find()
       .populate('client')
@@ -18,6 +18,7 @@ router.get('/', async (req, res) => {
 
 // GET appointment by ID
 router.get('/:id', async (req, res) => {
+  const { Appointment } = req.models;
   try {
     const appointment = await Appointment.findById(req.params.id)
       .populate('client')
@@ -32,6 +33,7 @@ router.get('/:id', async (req, res) => {
 
 // POST new appointment
 router.post('/', async (req, res) => {
+  const { Appointment } = req.models;
   const { client, employee, services, date, startTime, totalDuration, totalPrice, status } = req.body;
 
   const missing = firstMissingField(req.body, ['client', 'employee', 'date', 'startTime', 'totalDuration', 'totalPrice']);
@@ -52,6 +54,7 @@ router.post('/', async (req, res) => {
 
 // PUT update appointment
 router.put('/:id', async (req, res) => {
+  const { Appointment } = req.models;
   try {
     const updated = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!updated) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
@@ -63,6 +66,7 @@ router.put('/:id', async (req, res) => {
 
 // DELETE appointment
 router.delete('/:id', async (req, res) => {
+  const { Appointment } = req.models;
   try {
     const appointment = await Appointment.findById(req.params.id);
     if (!appointment) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');

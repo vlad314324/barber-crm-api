@@ -10,6 +10,7 @@ const employeeSchema = new mongoose.Schema({
   name:        { type: String, required: true },
   phone:       { type: String, required: true },
   email:       { type: String, required: true, unique: true },
+  userId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', unique: true, sparse: true },
   role:        { type: String, enum: ['Barber', 'Receptionist', 'Manager'], required: true },
   hourlyRate:  { type: Number, required: true },
   isAvailable: { type: Boolean, default: true },
@@ -29,4 +30,4 @@ const employeeSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
-module.exports = mongoose.model('Employee', employeeSchema);
+module.exports = employeeSchema;

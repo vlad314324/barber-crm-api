@@ -30,5 +30,4 @@ const serviceSchema = new mongoose.Schema({
   },
 });
 
-// Експортуємо модель, щоб її можна було використовувати в інших частинах програми
-module.exports = mongoose.model('Service', serviceSchema);
+module.exports = serviceSchema;

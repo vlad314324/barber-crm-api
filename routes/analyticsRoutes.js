@@ -1,12 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const Appointment = require('../models/Appointment');
-const Client = require('../models/Client');
-const Employee = require('../models/Employee');
 const { handleRouteError } = require('../utils/errorCodes');
 
-// GET /api/analytics/dashboard
+// GET /api/:salonSlug/analytics/dashboard
 router.get('/dashboard', async (req, res) => {
+  const { Appointment, Client, Employee } = req.models;
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -81,17 +79,18 @@ router.get('/dashboard', async (req, res) => {
   }
 });
 
-// GET /api/analytics/forecast
+// GET /api/:salonSlug/analytics/forecast
 router.get('/forecast', async (req, res) => {
+  const { Appointment } = req.models;
   try {
     const now = new Date();
-    
+
     // Отримуємо дату 28 днів тому (4 повні тижні), щоб відсікти старі нулі
     const fourWeeksAgo = new Date();
     fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
 
     // Беремо записи тільки за останні 4 тижні
-    const appts = await Appointment.find({ 
+    const appts = await Appointment.find({
       status: 'Completed',
       date: { $gte: fourWeeksAgo }
     }).sort({ date: 1 });
@@ -136,7 +135,7 @@ router.get('/forecast', async (req, res) => {
       const targetDayOfWeek = targetDate.getDay();
 
       // Отримуємо історичні значення саме для ЦЬОГО дня тижня (наприклад, тільки останні 4 суботи)
-      const values = weekdayData[targetDayOfWeek]; 
+      const values = weekdayData[targetDayOfWeek];
       const n = values.length; // n = 4 (чотири точки)
 
       if (n === 0) {
@@ -183,10 +182,10 @@ router.get('/forecast', async (req, res) => {
 
     const finalMae = (totalMae / 7).toFixed(2);
 
-    res.json({ 
-      series, 
-      forecast, 
-      mae: finalMae, 
+    res.json({
+      series,
+      forecast,
+      mae: finalMae,
       sma: (series.reduce((s, v) => s + v.count, 0) / 14).toFixed(1)
     });
   } catch (err) {
@@ -194,8 +193,9 @@ router.get('/forecast', async (req, res) => {
   }
 });
 
-// GET /api/analytics/rfm
+// GET /api/:salonSlug/analytics/rfm
 router.get('/rfm', async (req, res) => {
+  const { Client, Appointment } = req.models;
   try {
     const clients = await Client.find();
     const now = new Date();

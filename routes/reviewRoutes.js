@@ -1,10 +1,9 @@
 const express = require('express');
 const router  = express.Router();
-const Review   = require('../models/Review');
-const Employee = require('../models/Employee');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 router.get('/', async (req, res) => {
+  const { Review } = req.models;
   try {
     const reviews = await Review.find()
       .populate('client', 'name')
@@ -15,6 +14,7 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/employee/:employeeId', async (req, res) => {
+  const { Review } = req.models;
   try {
     const reviews = await Review.find({ employee: req.params.employeeId })
       .populate('client', 'name')
@@ -24,6 +24,7 @@ router.get('/employee/:employeeId', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
+  const { Review, Employee } = req.models;
   const missing = firstMissingField(req.body, ['client', 'employee', 'rating']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
@@ -45,6 +46,7 @@ router.post('/', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
+  const { Review, Employee } = req.models;
   try {
     const review = await Review.findByIdAndDelete(req.params.id);
     if (!review) return sendError(res, 404, ERROR_CODES.REVIEW_NOT_FOUND, 'Відгук не знайдено');
