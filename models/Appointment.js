@@ -43,7 +43,16 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     enum: ['uk', 'en'],
     default: 'uk'
-  }
+  },
+  // Внутрішні коментарі персоналу (адмін/барбер), не видимі клієнту.
+  // Append-only лог, а не одне поле — щоб два співробітники не затирали
+  // коментарі одне одного через "сліпий" PUT /:id, що перезаписує весь документ.
+  notes: [{
+    text:       { type: String, required: true },
+    authorName: { type: String, required: true },
+    authorRole: { type: String },
+    createdAt:  { type: Date, default: Date.now },
+  }]
 });
 
 module.exports = appointmentSchema;

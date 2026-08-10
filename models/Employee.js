@@ -14,6 +14,7 @@ const employeeSchema = new mongoose.Schema({
   role:        { type: String, enum: ['Barber', 'Receptionist', 'Manager'], required: true },
   hourlyRate:  { type: Number, required: true },
   isAvailable: { type: Boolean, default: true },
+  isActive:    { type: Boolean, default: true },
   bio:         { type: String, default: '' },
   specialties: [{ type: String }],
   rating:      { type: Number, default: 0 },

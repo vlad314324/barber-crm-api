@@ -5,6 +5,13 @@ const SettingsSchema = new mongoose.Schema({
   address: { type: String, default: '' },
   phone: { type: String, default: '' },
   email: { type: String, default: '' },
+  coverImageUrl: { type: String, default: '' },
+  logoUrl:       { type: String, default: '' },
+  tagline:       { type: String, default: '' },
+  accentColor:   { type: String, default: '' },
+  latitude:      { type: Number, default: null },
+  longitude:     { type: Number, default: null },
+  websiteUrl:    { type: String, default: '' },
   workingHours: {
     type: Map,
     of: new mongoose.Schema({

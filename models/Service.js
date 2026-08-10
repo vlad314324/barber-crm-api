@@ -21,7 +21,6 @@ const serviceSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['Haircut', 'Beard Trim', 'Shave', 'Hair Wash', 'Styling', 'Other'],
     required: true,
   },
   isAvailable: {

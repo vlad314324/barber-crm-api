@@ -17,11 +17,24 @@ router.get('/services', async (req, res) => {
   }
 });
 
+// GET /api/:salonSlug/booking/settings — публічний брендинг сторінки бронювання
+router.get('/settings', async (req, res) => {
+  const { Settings } = req.models;
+  try {
+    let settings = await Settings.findOne();
+    if (!settings) settings = await Settings.create({});
+    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl } = settings;
+    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl });
+  } catch (err) {
+    handleRouteError(res, err, 'booking/settings');
+  }
+});
+
 // GET /api/:salonSlug/booking/employees
 router.get('/employees', async (req, res) => {
   const { Employee } = req.models;
   try {
-    const employees = await Employee.find({ isAvailable: true, role: 'Barber' });
+    const employees = await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } });
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'booking/employees');
@@ -117,7 +130,7 @@ router.post('/', async (req, res) => {
   try {
     const employee = await Employee.findById(employeeId);
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
-    if (!employee.isAvailable) return sendError(res, 400, ERROR_CODES.EMPLOYEE_UNAVAILABLE, 'Майстер тимчасово недоступний для запису');
+    if (!employee.isAvailable || employee.isActive === false) return sendError(res, 400, ERROR_CODES.EMPLOYEE_UNAVAILABLE, 'Майстер тимчасово недоступний для запису');
 
     const services = await Service.find({ _id: { $in: serviceIds } });
     if (services.length !== serviceIds.length) {
@@ -191,6 +204,19 @@ router.post('/', async (req, res) => {
       });
     } catch (mailErr) {
       console.error('Email не надіслано:', mailErr.message);
+    }
+
+    try {
+      await req.models.Notification.create({
+        type: 'new_booking',
+        appointmentId: appointment._id,
+        clientName,
+        employeeName: employee?.name || 'Майстер',
+        date: dateObj,
+        startTime,
+      });
+    } catch (notifErr) {
+      console.error('Не вдалося створити сповіщення про бронювання:', notifErr.message);
     }
 
     res.status(201).json({

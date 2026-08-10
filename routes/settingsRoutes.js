@@ -24,12 +24,19 @@ router.put('/', async (req, res) => {
     if (!settings) {
       settings = await Settings.create(req.body);
     } else {
-      const { shopName, address, phone, email, workingHours } = req.body;
+      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl } = req.body;
       if (shopName !== undefined) settings.shopName = shopName;
       if (address !== undefined) settings.address = address;
       if (phone !== undefined) settings.phone = phone;
       if (email !== undefined) settings.email = email;
       if (workingHours !== undefined) settings.workingHours = workingHours;
+      if (coverImageUrl !== undefined) settings.coverImageUrl = coverImageUrl;
+      if (logoUrl !== undefined) settings.logoUrl = logoUrl;
+      if (tagline !== undefined) settings.tagline = tagline;
+      if (accentColor !== undefined) settings.accentColor = accentColor;
+      if (latitude !== undefined) settings.latitude = latitude;
+      if (longitude !== undefined) settings.longitude = longitude;
+      if (websiteUrl !== undefined) settings.websiteUrl = websiteUrl;
       await settings.save();
     }
     res.json(settings);

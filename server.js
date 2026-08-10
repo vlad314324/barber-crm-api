@@ -18,12 +18,15 @@ tenantRouter.use('/clients', verifyToken, require('./routes/clientRoutes'));
 tenantRouter.use('/employees', verifyToken, require('./routes/employeeRoutes'));
 tenantRouter.use('/appointments', verifyToken, require('./routes/appointmentRoutes'));
 tenantRouter.use('/services', verifyToken, require('./routes/serviceRoutes'));
+tenantRouter.use('/categories', verifyToken, require('./routes/categoryRoutes'));
 tenantRouter.use('/reviews', verifyToken, require('./routes/reviewRoutes'));
 tenantRouter.use('/booking', require('./routes/bookingRoutes'));
 tenantRouter.use('/settings', verifyToken, require('./routes/settingsRoutes'));
+tenantRouter.use('/notifications', verifyToken, require('./routes/notificationRoutes'));
 tenantRouter.use('/analytics', verifyToken, require('./routes/analyticsRoutes'));
 
 app.use('/api/salons', require('./routes/salonRoutes'));
+app.use('/api/platform', require('./routes/platformRoutes'));
 app.use('/api/:salonSlug', tenantRouter);
 
 app.get('/', (req, res) => res.send('BarberCRM API is running'));
