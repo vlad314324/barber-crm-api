@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const { canEmployeePerformServices } = require('../utils/employeeServices');
 const {
   buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, parseFlexibleDate,
   resolveAlias, STATUS_ALIASES,
@@ -181,7 +182,7 @@ router.get('/:id', async (req, res) => {
 
 // POST new appointment
 router.post('/', async (req, res) => {
-  const { Appointment } = req.models;
+  const { Appointment, Employee } = req.models;
   const { client, employee, services, date, startTime, totalDuration, totalPrice, status } = req.body;
 
   const missing = firstMissingField(req.body, ['client', 'employee', 'date', 'startTime', 'totalDuration', 'totalPrice']);
@@ -190,6 +191,14 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    if (Array.isArray(services) && services.length > 0) {
+      const empDoc = await Employee.findById(employee);
+      if (!empDoc) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+      if (!canEmployeePerformServices(empDoc, services)) {
+        return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
+      }
+    }
+
     const newAppointment = new Appointment({
       client, employee, services, date, startTime, totalDuration, totalPrice, status
     });
@@ -202,8 +211,18 @@ router.post('/', async (req, res) => {
 
 // PUT update appointment
 router.put('/:id', async (req, res) => {
-  const { Appointment } = req.models;
+  const { Appointment, Employee } = req.models;
   try {
+    if (Array.isArray(req.body.services) && req.body.services.length > 0) {
+      const effectiveEmployeeId = req.body.employee || (await Appointment.findById(req.params.id))?.employee;
+      if (effectiveEmployeeId) {
+        const empDoc = await Employee.findById(effectiveEmployeeId);
+        if (empDoc && !canEmployeePerformServices(empDoc, req.body.services)) {
+          return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
+        }
+      }
+    }
+
     const updated = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!updated) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
     res.json(updated);

@@ -2,6 +2,7 @@ const express = require('express');
 const { sendBookingConfirmation } = require('../config/mailer');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const { canEmployeePerformServices } = require('../utils/employeeServices');
 
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const EMPLOYEE_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -135,6 +136,9 @@ router.post('/', async (req, res) => {
     const services = await Service.find({ _id: { $in: serviceIds } });
     if (services.length !== serviceIds.length) {
       return sendError(res, 400, ERROR_CODES.INVALID_SERVICE, 'Одну або декілька обраних послуг не знайдено');
+    }
+    if (!canEmployeePerformServices(employee, serviceIds)) {
+      return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
     }
 
     const dateObj = new Date(date);

@@ -17,6 +17,7 @@ const employeeSchema = new mongoose.Schema({
   isActive:    { type: Boolean, default: true },
   bio:         { type: String, default: '' },
   specialties: [{ type: String }],
+  services:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
   rating:      { type: Number, default: 0 },
   reviewCount: { type: Number, default: 0 },
   joinDate:    { type: Date, default: Date.now },
