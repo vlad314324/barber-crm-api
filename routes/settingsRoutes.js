@@ -24,7 +24,7 @@ router.put('/', async (req, res) => {
     if (!settings) {
       settings = await Settings.create(req.body);
     } else {
-      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl } = req.body;
+      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage } = req.body;
       if (shopName !== undefined) settings.shopName = shopName;
       if (address !== undefined) settings.address = address;
       if (phone !== undefined) settings.phone = phone;
@@ -37,6 +37,8 @@ router.put('/', async (req, res) => {
       if (latitude !== undefined) settings.latitude = latitude;
       if (longitude !== undefined) settings.longitude = longitude;
       if (websiteUrl !== undefined) settings.websiteUrl = websiteUrl;
+      if (bookingLanguages !== undefined) settings.bookingLanguages = bookingLanguages;
+      if (defaultBookingLanguage !== undefined) settings.defaultBookingLanguage = defaultBookingLanguage;
       await settings.save();
     }
     res.json(settings);

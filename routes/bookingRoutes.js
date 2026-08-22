@@ -24,8 +24,8 @@ router.get('/settings', async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
-    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl } = settings;
-    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl });
+    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage } = settings;
+    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }

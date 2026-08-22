@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+const BOOKING_LANGUAGES = ['uk', 'en', 'cs', 'pl'];
+
 const SettingsSchema = new mongoose.Schema({
   shopName: { type: String, default: 'BarberShop' },
   address: { type: String, default: '' },
@@ -28,6 +30,25 @@ const SettingsSchema = new mongoose.Schema({
       ['saturday',  { isOpen: true,  from: '10:00', to: '17:00' }],
       ['sunday',    { isOpen: false, from: '10:00', to: '17:00' }],
     ]),
+  },
+  bookingLanguages: {
+    type: [{ type: String, enum: BOOKING_LANGUAGES }],
+    default: ['uk', 'en'],
+    validate: {
+      validator: (arr) => Array.isArray(arr) && arr.length > 0,
+      message: 'Потрібно залишити хоча б одну мову сторінки бронювання',
+    },
+  },
+  defaultBookingLanguage: {
+    type: String,
+    enum: BOOKING_LANGUAGES,
+    default: 'uk',
+    validate: {
+      validator: function (lang) {
+        return (this.bookingLanguages || []).includes(lang);
+      },
+      message: 'Мова за замовчуванням повинна бути серед увімкнених мов сторінки бронювання',
+    },
   },
 }, { timestamps: true });
 
