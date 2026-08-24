@@ -12,6 +12,7 @@ const employeeSchema = new mongoose.Schema({
   email:       { type: String, required: true, unique: true },
   userId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', unique: true, sparse: true },
   role:        { type: String, enum: ['Barber', 'Receptionist', 'Manager'], required: true },
+  customRoleLabel: { type: String, default: '', trim: true },
   hourlyRate:  { type: Number, required: true },
   isAvailable: { type: Boolean, default: true },
   isActive:    { type: Boolean, default: true },

@@ -1,7 +1,8 @@
 const nodemailer = require('nodemailer');
+const { currencySymbol } = require('../utils/currency');
 
 const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
+  host: 'smtp.zoho.eu',
   port: 587,
   secure: false,
   auth: {
@@ -12,6 +13,23 @@ const transporter = nodemailer.createTransport({
     rejectUnauthorized: false,
   },
 });
+
+// Логотип у листах підвантажується з прод-фронтенду (публічний /icon.png),
+// тому локально (FRONTEND_URL=http://localhost:...) картинка просто не
+// відобразиться в поштовому клієнті — це очікувано, не помилка.
+const LOGO_URL = `${process.env.FRONTEND_URL || ''}/icon.png`;
+
+const emailHeader = (subtitle) => `
+  <div style="background: #1f2937; padding: 28px 24px; text-align: center; border-radius: 8px 8px 0 0;">
+    <img src="${LOGO_URL}" alt="hirnix" width="40" height="40" style="border-radius: 9px; display: block; margin: 0 auto 10px;" />
+    <h1 style="color: white; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em;">hirnix<span style="color: #10b981;">.</span></h1>
+    <p style="color: #9ca3af; margin: 8px 0 0;">${subtitle}</p>
+  </div>
+`;
+
+const emailFooter = (note) => `
+  <p style="color: #9ca3af; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} hirnix.${note ? ` ${note}` : ''}</p>
+`;
 
 const TEMPLATES = {
   uk: {
@@ -25,9 +43,8 @@ const TEMPLATES = {
     minutesLabel: 'хв',
     servicesLabel: 'Послуги:',
     totalLabel: 'Сума до сплати: ',
-    currency: 'грн',
     footerNote: "Якщо вам потрібно перенести або скасувати запис — зв'яжіться з нами заздалегідь.",
-    footerCopy: '© 2025 BarberCRM. Дякуємо за вибір!',
+    footerCopy: 'Дякуємо за вибір!',
     subject: (date, startTime) => `✂️ Підтвердження запису на ${date} о ${startTime}`,
   },
   en: {
@@ -41,9 +58,8 @@ const TEMPLATES = {
     minutesLabel: 'min',
     servicesLabel: 'Services:',
     totalLabel: 'Total to pay: ',
-    currency: 'UAH',
     footerNote: 'If you need to reschedule or cancel your appointment, please contact us in advance.',
-    footerCopy: '© 2025 BarberCRM. Thanks for choosing us!',
+    footerCopy: 'Thanks for choosing us!',
     subject: (date, startTime) => `✂️ Booking confirmed for ${date} at ${startTime}`,
   },
 };
@@ -57,7 +73,7 @@ const REMINDER_TEMPLATES = {
     rowDate: 'Дата',
     rowTime: 'Час',
     footerNote: "Якщо вам потрібно перенести або скасувати запис — зв'яжіться з нами заздалегідь.",
-    footerCopy: '© 2025 BarberCRM. Чекаємо на вас!',
+    footerCopy: 'Чекаємо на вас!',
     subject: (startTime) => `✂️ Нагадування: запис завтра о ${startTime}`,
   },
   en: {
@@ -68,7 +84,7 @@ const REMINDER_TEMPLATES = {
     rowDate: 'Date',
     rowTime: 'Time',
     footerNote: 'If you need to reschedule or cancel your appointment, please contact us in advance.',
-    footerCopy: '© 2025 BarberCRM. See you soon!',
+    footerCopy: 'See you soon!',
     subject: (startTime) => `✂️ Reminder: appointment tomorrow at ${startTime}`,
   },
 };
@@ -81,8 +97,8 @@ const RESET_TEMPLATES = {
     button: 'Встановити новий пароль',
     expiry: 'Посилання дійсне протягом 1 години.',
     ignoreNote: 'Якщо ви не запитували відновлення пароля, просто проігноруйте цей лист — пароль не зміниться.',
-    footerCopy: '© 2025 BarberCRM.',
-    subject: '🔒 Відновлення пароля BarberCRM',
+    footerCopy: '',
+    subject: '🔒 Відновлення пароля hirnix',
   },
   en: {
     headerTitle: 'Password reset',
@@ -91,33 +107,31 @@ const RESET_TEMPLATES = {
     button: 'Set new password',
     expiry: 'This link is valid for 1 hour.',
     ignoreNote: "If you didn't request a password reset, just ignore this email — your password will stay the same.",
-    footerCopy: '© 2025 BarberCRM.',
-    subject: '🔒 BarberCRM password reset',
+    footerCopy: '',
+    subject: '🔒 hirnix password reset',
   },
 };
 
 const SALON_DEACTIVATED_TEMPLATE = {
   headerTitle: 'Доступ призупинено',
   greeting: (name) => `Вітаємо, ${name}!`,
-  intro: 'Повідомляємо, що доступ до вашого салону в системі BarberCRM тимчасово призупинено адміністрацією платформи. Персонал не зможе увійти в кабінет, а сторінка онлайн-бронювання буде недоступна клієнтам.',
+  intro: 'Повідомляємо, що доступ до вашого салону в системі hirnix тимчасово призупинено адміністрацією платформи. Персонал не зможе увійти в кабінет, а сторінка онлайн-бронювання буде недоступна клієнтам.',
   reasonLabel: 'Причина:',
   contactNote: "Якщо вважаєте, що це помилка, або хочете відновити доступ — зв'яжіться з нами.",
-  footerCopy: '© 2025 BarberCRM.',
+  footerCopy: '',
   subject: (salonName) => `⚠️ Доступ до салону "${salonName}" призупинено`,
 };
 
 const resolveTemplate = (lang) => TEMPLATES[lang] || TEMPLATES.uk;
 
-const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, services, date, startTime, totalPrice, totalDuration, lang }) => {
+const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, services, date, startTime, totalPrice, totalDuration, lang, currency }) => {
+  const currencyLabel = currencySymbol(currency);
   const t = resolveTemplate(lang);
-  const serviceList = services.map(s => `<li>${s.name} — ${s.price} ${t.currency} (${s.duration} ${t.minutesLabel})</li>`).join('');
+  const serviceList = services.map(s => `<li>${s.name} — ${s.price} ${currencyLabel} (${s.duration} ${t.minutesLabel})</li>`).join('');
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background: #1f2937; padding: 24px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0; font-size: 24px;">✂️ BarberCRM</h1>
-        <p style="color: #9ca3af; margin: 8px 0 0;">${t.subjectTitle}</p>
-      </div>
+      ${emailHeader(t.subjectTitle)}
 
       <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
         <h2 style="color: #111827; margin-top: 0;">${t.greeting(clientName)}</h2>
@@ -152,21 +166,21 @@ const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, 
 
           <div style="border-top: 1px solid #e5e7eb; margin-top: 12px; padding-top: 12px;">
             <span style="font-weight: 700; font-size: 16px;">${t.totalLabel}</span>
-            <span style="font-weight: 700; font-size: 18px; color: #4f46e5;">${totalPrice} ${t.currency}</span>
+            <span style="font-weight: 700; font-size: 18px; color: #4f46e5;">${totalPrice} ${currencyLabel}</span>
           </div>
         </div>
 
         <p style="color: #6b7280; font-size: 14px;">${t.footerNote}</p>
 
         <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb; text-align: center;">
-          <p style="color: #9ca3af; font-size: 12px; margin: 0;">${t.footerCopy}</p>
+          ${emailFooter(t.footerCopy)}
         </div>
       </div>
     </div>
   `;
 
   await transporter.sendMail({
-    from: `"BarberCRM" <${process.env.EMAIL_USER}>`,
+    from: `"hirnix" <${process.env.EMAIL_USER}>`,
     to: clientEmail,
     subject: t.subject(date, startTime),
     html,
@@ -177,10 +191,7 @@ const sendReminder = async ({ clientEmail, clientName, employeeName, date, start
   const t = REMINDER_TEMPLATES[lang] || REMINDER_TEMPLATES.uk;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background: #1f2937; padding: 24px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0; font-size: 24px;">✂️ BarberCRM</h1>
-        <p style="color: #9ca3af; margin: 8px 0 0;">${t.headerTitle}</p>
-      </div>
+      ${emailHeader(t.headerTitle)}
       <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
         <h2 style="color: #111827; margin-top: 0;">${t.greeting(clientName)}</h2>
         <p style="color: #6b7280;">${t.intro}</p>
@@ -202,14 +213,14 @@ const sendReminder = async ({ clientEmail, clientName, employeeName, date, start
         </div>
         <p style="color: #6b7280; font-size: 14px;">${t.footerNote}</p>
         <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb; text-align: center;">
-          <p style="color: #9ca3af; font-size: 12px; margin: 0;">${t.footerCopy}</p>
+          ${emailFooter(t.footerCopy)}
         </div>
       </div>
     </div>
   `;
 
   await transporter.sendMail({
-    from: `"BarberCRM" <${process.env.EMAIL_USER}>`,
+    from: `"hirnix" <${process.env.EMAIL_USER}>`,
     to: clientEmail,
     subject: t.subject(startTime),
     html,
@@ -220,10 +231,7 @@ const sendPasswordResetEmail = async ({ email, name, resetUrl, lang }) => {
   const t = RESET_TEMPLATES[lang] || RESET_TEMPLATES.uk;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background: #1f2937; padding: 24px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0; font-size: 24px;">✂️ BarberCRM</h1>
-        <p style="color: #9ca3af; margin: 8px 0 0;">${t.headerTitle}</p>
-      </div>
+      ${emailHeader(t.headerTitle)}
       <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
         <h2 style="color: #111827; margin-top: 0;">${t.greeting(name)}</h2>
         <p style="color: #6b7280;">${t.intro}</p>
@@ -233,14 +241,14 @@ const sendPasswordResetEmail = async ({ email, name, resetUrl, lang }) => {
         <p style="color: #9ca3af; font-size: 13px;">${t.expiry}</p>
         <p style="color: #9ca3af; font-size: 13px;">${t.ignoreNote}</p>
         <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb; text-align: center;">
-          <p style="color: #9ca3af; font-size: 12px; margin: 0;">${t.footerCopy}</p>
+          ${emailFooter(t.footerCopy)}
         </div>
       </div>
     </div>
   `;
 
   await transporter.sendMail({
-    from: `"BarberCRM" <${process.env.EMAIL_USER}>`,
+    from: `"hirnix" <${process.env.EMAIL_USER}>`,
     to: email,
     subject: t.subject,
     html,
@@ -251,10 +259,7 @@ const sendSalonDeactivatedEmail = async ({ email, ownerName, salonName, reason }
   const t = SALON_DEACTIVATED_TEMPLATE;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <div style="background: #1f2937; padding: 24px; text-align: center; border-radius: 8px 8px 0 0;">
-        <h1 style="color: white; margin: 0; font-size: 24px;">✂️ BarberCRM</h1>
-        <p style="color: #9ca3af; margin: 8px 0 0;">${t.headerTitle}</p>
-      </div>
+      ${emailHeader(t.headerTitle)}
       <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
         <h2 style="color: #111827; margin-top: 0;">${t.greeting(ownerName || salonName)}</h2>
         <p style="color: #6b7280;">${t.intro}</p>
@@ -264,14 +269,14 @@ const sendSalonDeactivatedEmail = async ({ email, ownerName, salonName, reason }
         </div>` : ''}
         <p style="color: #6b7280; font-size: 14px;">${t.contactNote}</p>
         <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e5e7eb; text-align: center;">
-          <p style="color: #9ca3af; font-size: 12px; margin: 0;">${t.footerCopy}</p>
+          ${emailFooter(t.footerCopy)}
         </div>
       </div>
     </div>
   `;
 
   await transporter.sendMail({
-    from: `"BarberCRM" <${process.env.EMAIL_USER}>`,
+    from: `"hirnix" <${process.env.EMAIL_USER}>`,
     to: email,
     subject: t.subject(salonName),
     html,

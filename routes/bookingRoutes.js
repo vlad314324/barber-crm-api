@@ -24,8 +24,8 @@ router.get('/settings', async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
-    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage } = settings;
-    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage });
+    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency } = settings;
+    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }
@@ -118,7 +118,7 @@ router.get('/available-slots', async (req, res) => {
 
 // POST /api/:salonSlug/booking — створити запис
 router.post('/', async (req, res) => {
-  const { Employee, Service, Appointment, Client } = req.models;
+  const { Employee, Service, Appointment, Client, Settings } = req.models;
   const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang } = req.body;
 
   const missing = firstMissingField(req.body, ['employeeId', 'serviceIds', 'date', 'startTime', 'clientName', 'clientPhone']);
@@ -177,6 +177,8 @@ router.post('/', async (req, res) => {
       return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
     }
 
+    const settings = await Settings.findOne();
+
     let client = await Client.findOne({ phone: clientPhone });
     if (!client) {
       client = await Client.create({ name: clientName, phone: clientPhone, email: clientEmail || '' });
@@ -194,21 +196,23 @@ router.post('/', async (req, res) => {
       preferredLang,
     });
 
-    try {
-      await sendBookingConfirmation({
-        clientEmail,
-        clientName,
-        employeeName: employee?.name || 'Майстер',
-        services,
-        date,
-        startTime,
-        totalPrice,
-        totalDuration,
-        lang: preferredLang,
-      });
-    } catch (mailErr) {
+    // Лист і сповіщення надсилаємо без очікування (SMTP-хендшейк буває
+    // повільним, і клієнт на публічній сторінці бронювання не повинен
+    // висіти в очікуванні листа — бронювання вже успішно створене).
+    sendBookingConfirmation({
+      clientEmail,
+      clientName,
+      employeeName: employee?.name || 'Майстер',
+      services,
+      date,
+      startTime,
+      totalPrice,
+      totalDuration,
+      lang: preferredLang,
+      currency: settings?.currency,
+    }).catch((mailErr) => {
       console.error('Email не надіслано:', mailErr.message);
-    }
+    });
 
     try {
       await req.models.Notification.create({

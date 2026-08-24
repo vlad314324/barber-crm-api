@@ -161,15 +161,15 @@ router.post('/salons/:id/deactivate', verifyPlatformAdmin, async (req, res) => {
     salon.deactivationReason = req.body.reason || '';
     await salon.save();
 
-    try {
-      await sendSalonDeactivatedEmail({
-        email: salon.ownerEmail,
-        salonName: salon.name,
-        reason: salon.deactivationReason,
-      });
-    } catch (mailErr) {
+    // Не чекаємо на SMTP — деактивація вже застосована, адмін не повинен
+    // висіти на кнопці, доки не завершиться повільний хендшейк.
+    sendSalonDeactivatedEmail({
+      email: salon.ownerEmail,
+      salonName: salon.name,
+      reason: salon.deactivationReason,
+    }).catch((mailErr) => {
       console.error('Не вдалося надіслати лист про деактивацію салону:', mailErr.message);
-    }
+    });
 
     res.json(serializeSalon(salon));
   } catch (err) {

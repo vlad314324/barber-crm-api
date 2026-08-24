@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const BOOKING_LANGUAGES = ['uk', 'en', 'cs', 'pl'];
+const CURRENCIES = ['UAH', 'CZK', 'EUR', 'PLN', 'USD', 'GBP'];
 
 const SettingsSchema = new mongoose.Schema({
   shopName: { type: String, default: 'BarberShop' },
@@ -50,6 +51,7 @@ const SettingsSchema = new mongoose.Schema({
       message: 'Мова за замовчуванням повинна бути серед увімкнених мов сторінки бронювання',
     },
   },
+  currency: { type: String, enum: CURRENCIES, default: 'UAH' },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;

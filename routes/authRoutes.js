@@ -155,11 +155,11 @@ router.post('/forgot-password', async (req, res) => {
       await user.save();
 
       const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${req.tenant.slug}/${rawToken}`;
-      try {
-        await sendPasswordResetEmail({ email: user.email, name: user.name, resetUrl, lang });
-      } catch (err) {
+      // Не чекаємо на SMTP — інакше клієнт висить на екрані "Надсилання...",
+      // доки не завершиться повільний хендшейк.
+      sendPasswordResetEmail({ email: user.email, name: user.name, resetUrl, lang }).catch((err) => {
         console.error('[auth/forgot-password] email send failed', err);
-      }
+      });
     }
     res.json({ msg: genericMsg });
   } catch (err) {
