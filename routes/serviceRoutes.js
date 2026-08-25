@@ -18,7 +18,7 @@ const SERVICE_EXPORT_COLUMNS = [
 ];
 const SERVICE_IMPORT_COLUMNS = [
   { header: 'Name', key: 'name', aliases: ['Назва'], required: true },
-  { header: 'Description', key: 'description', aliases: ['Опис'], required: true },
+  { header: 'Description', key: 'description', aliases: ['Опис'] },
   { header: 'Price', key: 'price', aliases: ['Ціна', 'Вартість'], required: true },
   { header: 'Duration', key: 'duration', aliases: ['Тривалість'], required: true },
   { header: 'Category', key: 'category', aliases: ['Категорія'], required: true },
@@ -80,7 +80,7 @@ router.post('/import', importUpload('file'), async (req, res) => {
       const name = String(row.name || '').trim();
       const description = String(row.description || '').trim();
       const category = resolveAlias(CATEGORY_ALIASES, String(row.category || '').trim());
-      if (!name || !description || !category) throw new Error('Поля Name, Description, Category обовʼязкові');
+      if (!name || !category) throw new Error('Поля Name, Category обовʼязкові');
 
       if (!existingCategories.has(category)) {
         await Category.create({ name: category });
@@ -124,7 +124,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', async (req, res) => {
   const { Service, Category } = req.models;
-  const missing = firstMissingField(req.body, ['name', 'description', 'price', 'duration', 'category']);
+  const missing = firstMissingField(req.body, ['name', 'price', 'duration', 'category']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
