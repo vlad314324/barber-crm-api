@@ -1,5 +1,5 @@
 const express = require('express');
-const { sendBookingConfirmation } = require('../config/mailer');
+const { sendBookingConfirmation, sendEmployeeBookingNotification } = require('../config/mailer');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
@@ -213,6 +213,23 @@ router.post('/', async (req, res) => {
     }).catch((mailErr) => {
       console.error('Email не надіслано:', mailErr.message);
     });
+
+    if (employee.email) {
+      sendEmployeeBookingNotification({
+        employeeEmail: employee.email,
+        employeeName: employee.name,
+        clientName,
+        clientPhone,
+        services,
+        date,
+        startTime,
+        totalDuration,
+        totalPrice,
+        currency: settings?.currency,
+      }).catch((mailErr) => {
+        console.error('Лист майстру не надіслано:', mailErr.message);
+      });
+    }
 
     try {
       await req.models.Notification.create({

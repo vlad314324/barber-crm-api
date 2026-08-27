@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const BOOKING_LANGUAGES = ['uk', 'en', 'cs', 'pl'];
 const CURRENCIES = ['UAH', 'CZK', 'EUR', 'PLN', 'USD', 'GBP'];
+const TIMEZONES = ['Europe/Kyiv', 'Europe/Prague', 'Europe/Warsaw', 'Europe/Berlin', 'Europe/London', 'America/New_York', 'UTC'];
 
 const SettingsSchema = new mongoose.Schema({
   shopName: { type: String, default: 'BarberShop' },
@@ -52,6 +53,7 @@ const SettingsSchema = new mongoose.Schema({
     },
   },
   currency: { type: String, enum: CURRENCIES, default: 'UAH' },
+  timezone: { type: String, enum: TIMEZONES, default: 'Europe/Kyiv' },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;
