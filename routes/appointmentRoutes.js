@@ -80,7 +80,9 @@ router.get('/export', async (req, res) => {
 
 // POST /appointments/import
 router.post('/import', importUpload('file'), async (req, res) => {
-  const { Appointment, Client, Employee, Service } = req.models;
+  const { Appointment, Client, Employee, Service, Settings } = req.models;
+  const settings = await Settings.findOne();
+  const rangesEnabled = !!settings?.serviceRangesEnabled;
   let rows, missingRequired, presentKeys;
   try {
     ({ rows, missingRequired, presentKeys } = parseWorkbookBuffer(req.file.buffer, APPOINTMENT_IMPORT_COLUMNS));
@@ -134,7 +136,7 @@ router.post('/import', importUpload('file'), async (req, res) => {
       // прайс-листом цього салону.
       const rawDuration = String(row.totalDuration ?? '').trim();
       const rawPrice = String(row.totalPrice ?? '').trim();
-      const totalDuration = rawDuration ? parseFlexibleNumber(rawDuration) : resolvedServices.reduce((sum, s) => sum + s.duration, 0);
+      const totalDuration = rawDuration ? parseFlexibleNumber(rawDuration) : resolvedServices.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
       const totalPrice = rawPrice ? parseFlexibleNumber(rawPrice) : resolvedServices.reduce((sum, s) => sum + s.price, 0);
       if (Number.isNaN(totalDuration) || Number.isNaN(totalPrice)) throw new Error('Total Duration і Total Price мають бути числами');
 

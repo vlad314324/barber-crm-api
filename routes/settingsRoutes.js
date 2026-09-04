@@ -24,7 +24,7 @@ router.put('/', async (req, res) => {
     if (!settings) {
       settings = await Settings.create(req.body);
     } else {
-      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, timezone } = req.body;
+      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, timezone, serviceRangesEnabled } = req.body;
       if (shopName !== undefined) settings.shopName = shopName;
       if (address !== undefined) settings.address = address;
       if (phone !== undefined) settings.phone = phone;
@@ -41,6 +41,7 @@ router.put('/', async (req, res) => {
       if (defaultBookingLanguage !== undefined) settings.defaultBookingLanguage = defaultBookingLanguage;
       if (currency !== undefined) settings.currency = currency;
       if (timezone !== undefined) settings.timezone = timezone;
+      if (serviceRangesEnabled !== undefined) settings.serviceRangesEnabled = serviceRangesEnabled;
       await settings.save();
     }
     res.json(settings);

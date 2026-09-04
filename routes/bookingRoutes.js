@@ -9,10 +9,24 @@ const EMPLOYEE_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 // GET /api/:salonSlug/booking/services
 router.get('/services', async (req, res) => {
-  const { Service } = req.models;
+  const { Service, Settings } = req.models;
   try {
+    const settings = await Settings.findOne();
+    const rangesEnabled = !!settings?.serviceRangesEnabled;
     const services = await Service.find({ isAvailable: true });
-    res.json(services);
+    // Коли опція діапазонів вимкнена — не віддаємо priceMax/durationMax
+    // публічній сторінці бронювання взагалі, щоб вона показувала й рахувала
+    // все як звичайну послугу з одним числом, навіть якщо в базі лишились
+    // раніше введені (і просто прихожі) значення діапазону.
+    const payload = rangesEnabled
+      ? services
+      : services.map((s) => {
+          const obj = s.toObject();
+          delete obj.priceMax;
+          delete obj.durationMax;
+          return obj;
+        });
+    res.json(payload);
   } catch (err) {
     handleRouteError(res, err, 'booking/services');
   }
@@ -45,10 +59,22 @@ router.get('/employees', async (req, res) => {
 // GET /api/:salonSlug/booking/available-slots?employeeId=...&date=...
 router.get('/available-slots', async (req, res) => {
   const { Appointment, Settings } = req.models;
-  const { employeeId, date } = req.query;
+  const { employeeId, date, durationMinutes } = req.query;
   const missing = firstMissingField(req.query, ['employeeId', 'date']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+
+  // Необов'язковий параметр — сума потрібної тривалості обраних послуг
+  // (МАКС, коли діапазони увімкнені). Коли переданий, додатково відсіюємо
+  // слоти, під якими немає суцільного вільного часу саме під цей новий
+  // запис. Без параметра поведінка не змінюється (зворотна сумісність).
+  let requiredDuration = null;
+  if (durationMinutes !== undefined) {
+    requiredDuration = Number(durationMinutes);
+    if (!Number.isFinite(requiredDuration) || requiredDuration <= 0) {
+      return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, 'durationMinutes має бути додатнім числом', { field: 'durationMinutes' });
+    }
   }
 
   try {
@@ -109,7 +135,23 @@ router.get('/available-slots', async (req, res) => {
       }
     });
 
-    const availableSlots = allSlots.filter(slot => !bookedSlots.has(slot));
+    let availableSlots = allSlots.filter(slot => !bookedSlots.has(slot));
+
+    if (requiredDuration) {
+      availableSlots = availableSlots.filter(slot => {
+        const [h, m] = slot.split(':').map(Number);
+        const slotStart = h * 60 + m;
+        const slotEnd = slotStart + requiredDuration;
+        if (slotEnd > toMinutes) return false; // запис не влазить у робочий день
+        return !existing.some(apt => {
+          const [ah, am] = apt.startTime.split(':').map(Number);
+          const aptStart = ah * 60 + am;
+          const aptEnd = aptStart + (apt.totalDuration || 30);
+          return slotStart < aptEnd && aptStart < slotEnd;
+        });
+      });
+    }
+
     res.json({ date, employeeId, availableSlots, closed: false });
   } catch (err) {
     handleRouteError(res, err, 'booking/available-slots');
@@ -148,8 +190,20 @@ router.post('/', async (req, res) => {
       return sendError(res, 400, ERROR_CODES.EMPLOYEE_DAY_OFF, 'У майстра вихідний у цей день');
     }
 
-    const totalDuration = services.reduce((sum, s) => sum + s.duration, 0);
-    const totalPrice    = services.reduce((sum, s) => sum + s.price, 0);
+    const settings = await Settings.findOne();
+    const rangesEnabled = !!settings?.serviceRangesEnabled;
+
+    // totalDuration — сума МАКСИМАЛЬНИХ тривалостей (коли діапазони
+    // увімкнені) — саме це резервується в календарі, щоб виключити
+    // накладання. totalPrice — завжди сума БАЗОВИХ (мінімальних) цін,
+    // персонал коригує фінальну суму вручну після надання послуги.
+    // totalDurationMin/totalPriceMax рахуються лише для показу діапазону
+    // в листах — коли rangesEnabled=false вони природно збігаються з
+    // totalDuration/totalPrice.
+    const totalDuration    = services.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
+    const totalDurationMin = services.reduce((sum, s) => sum + s.duration, 0);
+    const totalPrice       = services.reduce((sum, s) => sum + s.price, 0);
+    const totalPriceMax    = services.reduce((sum, s) => sum + (rangesEnabled ? (s.priceMax ?? s.price) : s.price), 0);
 
     // Перевірка накладання з існуючими записами майстра
     const startOfDay = new Date(date);
@@ -176,8 +230,6 @@ router.post('/', async (req, res) => {
     if (hasOverlap) {
       return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
     }
-
-    const settings = await Settings.findOne();
 
     let client = await Client.findOne({ phone: clientPhone });
     if (!client) {
@@ -207,9 +259,12 @@ router.post('/', async (req, res) => {
       date,
       startTime,
       totalPrice,
+      totalPriceMax,
       totalDuration,
+      totalDurationMin,
       lang: preferredLang,
       currency: settings?.currency,
+      rangesEnabled,
     }).catch((mailErr) => {
       console.error('Email не надіслано:', mailErr.message);
     });
@@ -224,8 +279,11 @@ router.post('/', async (req, res) => {
         date,
         startTime,
         totalDuration,
+        totalDurationMin,
         totalPrice,
+        totalPriceMax,
         currency: settings?.currency,
+        rangesEnabled,
       }).catch((mailErr) => {
         console.error('Лист майстру не надіслано:', mailErr.message);
       });

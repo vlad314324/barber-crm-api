@@ -54,6 +54,10 @@ const SettingsSchema = new mongoose.Schema({
   },
   currency: { type: String, enum: CURRENCIES, default: 'UAH' },
   timezone: { type: String, enum: TIMEZONES, default: 'Europe/Kyiv' },
+  // Коли увімкнено — послуги можуть мати ціну/тривалість діапазоном
+  // (priceMax/durationMax на Service). Вимкнено за замовчуванням: без
+  // явного вмикання салоном усе поводиться так, як до появи цієї фічі.
+  serviceRangesEnabled: { type: Boolean, default: false },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;

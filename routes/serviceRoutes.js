@@ -12,7 +12,9 @@ const SERVICE_EXPORT_COLUMNS = [
   { header: 'Name', key: 'name' },
   { header: 'Description', key: 'description' },
   { header: 'Price', key: 'price' },
+  { header: 'Price Max', key: 'priceMax' },
   { header: 'Duration', key: 'duration' },
+  { header: 'Duration Max', key: 'durationMax' },
   { header: 'Category', key: 'category' },
   { header: 'Available', key: 'isAvailable' },
 ];
@@ -20,7 +22,9 @@ const SERVICE_IMPORT_COLUMNS = [
   { header: 'Name', key: 'name', aliases: ['Назва'], required: true },
   { header: 'Description', key: 'description', aliases: ['Опис'] },
   { header: 'Price', key: 'price', aliases: ['Ціна', 'Вартість'], required: true },
+  { header: 'Price Max', key: 'priceMax', aliases: ['Ціна до', 'Максимальна ціна'] },
   { header: 'Duration', key: 'duration', aliases: ['Тривалість'], required: true },
+  { header: 'Duration Max', key: 'durationMax', aliases: ['Тривалість до', 'Максимальна тривалість'] },
   { header: 'Category', key: 'category', aliases: ['Категорія'], required: true },
   { header: 'Available', key: 'isAvailable', aliases: ['Доступна', 'Доступність'] },
 ];
@@ -43,7 +47,8 @@ router.get('/export', async (req, res) => {
     const rows = services.map((s) => ({
       id: String(s._id),
       name: s.name, description: s.description,
-      price: s.price, duration: s.duration, category: s.category,
+      price: s.price, priceMax: s.priceMax, duration: s.duration, durationMax: s.durationMax,
+      category: s.category,
       isAvailable: s.isAvailable ? 'Yes' : 'No',
     }));
     const buffer = buildWorkbookBuffer(rows, SERVICE_EXPORT_COLUMNS, 'Services');
@@ -57,7 +62,9 @@ router.get('/export', async (req, res) => {
 
 // POST /services/import
 router.post('/import', importUpload('file'), async (req, res) => {
-  const { Service, Category } = req.models;
+  const { Service, Category, Settings } = req.models;
+  const settings = await Settings.findOne();
+  const rangesEnabled = !!settings?.serviceRangesEnabled;
   let rows, missingRequired;
   try {
     ({ rows, missingRequired } = parseWorkbookBuffer(req.file.buffer, SERVICE_IMPORT_COLUMNS));
@@ -94,6 +101,25 @@ router.post('/import', importUpload('file'), async (req, res) => {
       const isAvailable = /^(yes|так|true|1)$/i.test(String(row.isAvailable ?? 'Yes').trim());
       const doc = { name, description, price, duration, category, isAvailable };
 
+      // Колонки Price Max/Duration Max ігноруємо повністю, поки опція
+      // діапазонів вимкнена в Налаштуваннях — незалежно від їх вмісту у
+      // файлі. Порожня клітинка при увімкненій опції не додається в doc,
+      // щоб повторний імпорт без цих колонок не стирав уже збережений
+      // діапазон послуги.
+      if (rangesEnabled) {
+        const priceMaxRaw = String(row.priceMax ?? '').trim();
+        const durationMaxRaw = String(row.durationMax ?? '').trim();
+        const priceMax = priceMaxRaw ? parseFlexibleNumber(priceMaxRaw) : undefined;
+        const durationMax = durationMaxRaw ? parseFlexibleNumber(durationMaxRaw) : undefined;
+        if ((priceMaxRaw && Number.isNaN(priceMax)) || (durationMaxRaw && Number.isNaN(durationMax))) {
+          throw new Error('Price Max і Duration Max мають бути числами');
+        }
+        if (priceMax !== undefined && priceMax < price) throw new Error('Price Max не може бути меншим за Price');
+        if (durationMax !== undefined && durationMax < duration) throw new Error('Duration Max не може бути меншим за Duration');
+        if (priceMax !== undefined) doc.priceMax = priceMax;
+        if (durationMax !== undefined) doc.durationMax = durationMax;
+      }
+
       const existing = await Service.findOne({ name });
       if (existing) {
         await Service.updateOne({ _id: existing._id }, doc, { runValidators: true });
@@ -123,7 +149,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { Service, Category } = req.models;
+  const { Service, Category, Settings } = req.models;
   const missing = firstMissingField(req.body, ['name', 'price', 'duration', 'category']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
@@ -133,7 +159,23 @@ router.post('/', async (req, res) => {
     const category = await Category.findOne({ name: req.body.category });
     if (!category) return sendError(res, 400, ERROR_CODES.CATEGORY_NOT_FOUND, 'Обрану категорію не знайдено');
 
-    const service = new Service(req.body);
+    const settings = await Settings.findOne();
+    const body = { ...req.body };
+    if (!settings?.serviceRangesEnabled) {
+      // Опція вимкнена — priceMax/durationMax ігноруємо, навіть якщо їх
+      // передали напряму через API в обхід форми.
+      delete body.priceMax;
+      delete body.durationMax;
+    } else {
+      if (body.priceMax !== undefined && body.priceMax !== null && body.priceMax !== '' && Number(body.priceMax) < Number(body.price)) {
+        return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Максимальна ціна не може бути меншою за базову ціну', { field: 'priceMax' });
+      }
+      if (body.durationMax !== undefined && body.durationMax !== null && body.durationMax !== '' && Number(body.durationMax) < Number(body.duration)) {
+        return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Максимальна тривалість не може бути меншою за базову тривалість', { field: 'durationMax' });
+      }
+    }
+
+    const service = new Service(body);
     await service.save();
     res.status(201).json(service);
   } catch (err) {
@@ -142,15 +184,35 @@ router.post('/', async (req, res) => {
 });
 
 router.put('/:id', async (req, res) => {
-  const { Service, Category } = req.models;
+  const { Service, Category, Settings } = req.models;
   try {
     if (req.body.category !== undefined) {
       const category = await Category.findOne({ name: req.body.category });
       if (!category) return sendError(res, 400, ERROR_CODES.CATEGORY_NOT_FOUND, 'Обрану категорію не знайдено');
     }
 
+    const settings = await Settings.findOne();
+    const body = { ...req.body };
+    if (!settings?.serviceRangesEnabled) {
+      delete body.priceMax;
+      delete body.durationMax;
+    } else {
+      if (body.priceMax !== undefined && body.priceMax !== null && body.priceMax !== '') {
+        const basePrice = body.price !== undefined ? Number(body.price) : (await Service.findById(req.params.id))?.price;
+        if (basePrice !== undefined && Number(body.priceMax) < basePrice) {
+          return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Максимальна ціна не може бути меншою за базову ціну', { field: 'priceMax' });
+        }
+      }
+      if (body.durationMax !== undefined && body.durationMax !== null && body.durationMax !== '') {
+        const baseDuration = body.duration !== undefined ? Number(body.duration) : (await Service.findById(req.params.id))?.duration;
+        if (baseDuration !== undefined && Number(body.durationMax) < baseDuration) {
+          return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Максимальна тривалість не може бути меншою за базову тривалість', { field: 'durationMax' });
+        }
+      }
+    }
+
     const service = await Service.findByIdAndUpdate(
-      req.params.id, req.body, { new: true, runValidators: true }
+      req.params.id, body, { new: true, runValidators: true }
     );
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
     res.json(service);
