@@ -8,7 +8,9 @@ const { getTenantContext } = require('../config/tenantDb');
 const { slugify } = require('../utils/slugify');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
-const SLUG_RE = /^[a-z0-9-]{3,40}$/;
+// Макс. 32 символи: dbName = `salon_${slug}` (префікс 6 байт), а MongoDB
+// Atlas обмежує назву бази 38 байтами — 6+32=38, рівно на межі.
+const SLUG_RE = /^[a-z0-9-]{3,32}$/;
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
@@ -55,6 +57,9 @@ router.post('/register', async (req, res) => {
   }
 
   slug = slug ? slugify(slug) : slugify(salonName);
+  if (slug.length > 32) {
+    return sendError(res, 400, ERROR_CODES.INVALID_SLUG, 'Слаг занадто довгий (максимум 32 символи) — вкажіть коротший вручну', { field: 'slug' });
+  }
   if (!SLUG_RE.test(slug)) {
     return sendError(res, 400, ERROR_CODES.INVALID_SLUG, 'Некоректний слаг салону', { field: 'slug' });
   }
