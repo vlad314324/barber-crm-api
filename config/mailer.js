@@ -85,7 +85,10 @@ const REMINDER_TEMPLATES = {
   uk: {
     headerTitle: 'Нагадування про запис',
     greeting: (name) => `Привіт, ${name}!`,
-    intro: 'Нагадуємо, що завтра у вас запис до барбершопу:',
+    // Не прив'язуємось до конкретного типу закладу (не всі салони —
+    // барбершопи) — використовуємо реальну назву салону з Settings, а якщо
+    // її раптом немає, формулювання лишається нейтральним.
+    intro: (shopName) => shopName ? `Нагадуємо, що завтра у вас запис до "${shopName}":` : 'Нагадуємо, що завтра у вас запис:',
     rowEmployee: 'Майстер',
     rowDate: 'Дата',
     rowTime: 'Час',
@@ -96,7 +99,7 @@ const REMINDER_TEMPLATES = {
   en: {
     headerTitle: 'Appointment reminder',
     greeting: (name) => `Hi, ${name}!`,
-    intro: 'This is a reminder that you have a barbershop appointment tomorrow:',
+    intro: (shopName) => shopName ? `This is a reminder that you have an appointment at ${shopName} tomorrow:` : 'This is a reminder that you have an appointment tomorrow:',
     rowEmployee: 'Barber',
     rowDate: 'Date',
     rowTime: 'Time',
@@ -311,14 +314,14 @@ const sendEmployeeBookingNotification = async ({ employeeEmail, employeeName, cl
   });
 };
 
-const sendReminder = async ({ clientEmail, clientName, employeeName, date, startTime, lang }) => {
+const sendReminder = async ({ clientEmail, clientName, employeeName, date, startTime, lang, shopName }) => {
   const t = REMINDER_TEMPLATES[lang] || REMINDER_TEMPLATES.uk;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       ${emailHeader(t.headerTitle)}
       <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
         <h2 style="color: #111827; margin-top: 0;">${t.greeting(clientName)}</h2>
-        <p style="color: #6b7280;">${t.intro}</p>
+        <p style="color: #6b7280;">${t.intro(shopName)}</p>
         <div style="background: #f9fafb; border-radius: 8px; padding: 20px; margin: 24px 0;">
           <table style="width: 100%; border-collapse: collapse;">
             <tr>

@@ -74,6 +74,7 @@ const startReminderJob = () => {
               date: new Date(apt.date).toLocaleDateString(apt.preferredLang === 'en' ? 'en-US' : 'uk-UA'),
               startTime: apt.startTime,
               lang: apt.preferredLang,
+              shopName: settings?.shopName,
             });
             apt.reminderSent = true;
             await apt.save();
