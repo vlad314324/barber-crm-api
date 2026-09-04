@@ -1,19 +1,32 @@
-const nodemailer = require('nodemailer');
 const { currencySymbol } = require('../utils/currency');
 const { buildGoogleCalendarUrl } = require('../utils/googleCalendar');
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.zoho.eu',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-});
+// Лист шлемо через Brevo HTTP API (порт 443), а не SMTP — безкоштовний
+// Render блокує вихідний трафік на SMTP-порти (25/465/587), тому пряме
+// з'єднання з поштовим сервером звідти більше не працює.
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+const BREVO_SENDER = { name: 'hirnix', email: process.env.EMAIL_USER };
+
+const sendMail = async ({ to, subject, html }) => {
+  const res = await fetch(BREVO_API_URL, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': process.env.BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender: BREVO_SENDER,
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Brevo API ${res.status}: ${body}`);
+  }
+};
 
 // Логотип у листах підвантажується з прод-фронтенду (публічний /icon.png),
 // тому локально (FRONTEND_URL=http://localhost:...) картинка просто не
@@ -209,8 +222,7 @@ const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, 
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"hirnix" <${process.env.EMAIL_USER}>`,
+  await sendMail({
     to: clientEmail,
     subject: t.subject(date, startTime),
     html,
@@ -283,8 +295,7 @@ const sendEmployeeBookingNotification = async ({ employeeEmail, employeeName, cl
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"hirnix" <${process.env.EMAIL_USER}>`,
+  await sendMail({
     to: employeeEmail,
     subject: t.subject(date, startTime),
     html,
@@ -323,8 +334,7 @@ const sendReminder = async ({ clientEmail, clientName, employeeName, date, start
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"hirnix" <${process.env.EMAIL_USER}>`,
+  await sendMail({
     to: clientEmail,
     subject: t.subject(startTime),
     html,
@@ -351,8 +361,7 @@ const sendPasswordResetEmail = async ({ email, name, resetUrl, lang }) => {
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"hirnix" <${process.env.EMAIL_USER}>`,
+  await sendMail({
     to: email,
     subject: t.subject,
     html,
@@ -379,8 +388,7 @@ const sendSalonDeactivatedEmail = async ({ email, ownerName, salonName, reason }
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"hirnix" <${process.env.EMAIL_USER}>`,
+  await sendMail({
     to: email,
     subject: t.subject(salonName),
     html,
