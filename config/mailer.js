@@ -1,6 +1,7 @@
 const { currencySymbol } = require('../utils/currency');
 const { buildGoogleCalendarUrl } = require('../utils/googleCalendar');
 const { formatRange } = require('../utils/range');
+const { formatDurationRange } = require('../utils/duration');
 
 // Лист шлемо через Brevo HTTP API (порт 443), а не SMTP — безкоштовний
 // Render блокує вихідний трафік на SMTP-порти (25/465/587), тому пряме
@@ -56,6 +57,7 @@ const TEMPLATES = {
     rowTime: 'Час',
     rowDuration: 'Тривалість',
     minutesLabel: 'хв',
+    hoursLabel: 'год',
     servicesLabel: 'Послуги:',
     totalLabel: 'Сума до сплати: ',
     calendarButton: 'Додати в Google Calendar',
@@ -72,6 +74,7 @@ const TEMPLATES = {
     rowTime: 'Time',
     rowDuration: 'Duration',
     minutesLabel: 'min',
+    hoursLabel: 'hr',
     servicesLabel: 'Services:',
     totalLabel: 'Total to pay: ',
     calendarButton: 'Add to Google Calendar',
@@ -152,6 +155,7 @@ const EMPLOYEE_NOTIFICATION_TEMPLATE = {
   rowTime: 'Час',
   rowDuration: 'Тривалість',
   minutesLabel: 'хв',
+  hoursLabel: 'год',
   servicesLabel: 'Послуги:',
   totalLabel: 'Сума: ',
   calendarButton: 'Додати в Google Calendar',
@@ -167,8 +171,8 @@ const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, 
   const t = resolveTemplate(lang);
   const serviceList = services.map(s => {
     const priceText = rangesEnabled ? formatRange(s.price, s.priceMax) : String(s.price);
-    const durationText = rangesEnabled ? formatRange(s.duration, s.durationMax) : String(s.duration);
-    return `<li>${s.name} — ${priceText} ${currencyLabel} (${durationText} ${t.minutesLabel})</li>`;
+    const durationText = formatDurationRange(s.duration, rangesEnabled ? s.durationMax : undefined, t);
+    return `<li>${s.name} — ${priceText} ${currencyLabel} (${durationText})</li>`;
   }).join('');
   const calendarUrl = buildGoogleCalendarUrl({
     title: `${employeeName} — ${services.map(s => s.name).join(', ')}`,
@@ -200,7 +204,7 @@ const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, 
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">${t.rowDuration}</td>
-              <td style="padding: 8px 0; font-weight: 600; text-align: right;">${formatRange(totalDurationMin, totalDuration)} ${t.minutesLabel}</td>
+              <td style="padding: 8px 0; font-weight: 600; text-align: right;">${formatDurationRange(totalDurationMin, totalDuration, t)}</td>
             </tr>
           </table>
 
@@ -242,8 +246,8 @@ const sendEmployeeBookingNotification = async ({ employeeEmail, employeeName, cl
   const t = EMPLOYEE_NOTIFICATION_TEMPLATE;
   const serviceList = services.map(s => {
     const priceText = rangesEnabled ? formatRange(s.price, s.priceMax) : String(s.price);
-    const durationText = rangesEnabled ? formatRange(s.duration, s.durationMax) : String(s.duration);
-    return `<li>${s.name} — ${priceText} ${currencyLabel} (${durationText} ${t.minutesLabel})</li>`;
+    const durationText = formatDurationRange(s.duration, rangesEnabled ? s.durationMax : undefined, t);
+    return `<li>${s.name} — ${priceText} ${currencyLabel} (${durationText})</li>`;
   }).join('');
   const calendarUrl = buildGoogleCalendarUrl({
     title: `Запис: ${clientName} — ${services.map(s => s.name).join(', ')}`,
@@ -279,7 +283,7 @@ const sendEmployeeBookingNotification = async ({ employeeEmail, employeeName, cl
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">${t.rowDuration}</td>
-              <td style="padding: 8px 0; font-weight: 600; text-align: right;">${formatRange(totalDurationMin, totalDuration)} ${t.minutesLabel}</td>
+              <td style="padding: 8px 0; font-weight: 600; text-align: right;">${formatDurationRange(totalDurationMin, totalDuration, t)}</td>
             </tr>
           </table>
 
