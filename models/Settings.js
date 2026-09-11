@@ -58,6 +58,13 @@ const SettingsSchema = new mongoose.Schema({
   // (priceMax/durationMax на Service). Вимкнено за замовчуванням: без
   // явного вмикання салоном усе поводиться так, як до появи цієї фічі.
   serviceRangesEnabled: { type: Boolean, default: false },
+  // Як адмінка показує/приймає тривалість послуг і записів: у хвилинах
+  // одним числом, або в годинах+хвилинах.
+  durationDisplayUnit: {
+    type: String,
+    enum: ['minutes', 'hours'],
+    default: 'minutes',
+  },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;
