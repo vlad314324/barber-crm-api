@@ -2,15 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
-const DEFAULT_CATEGORIES = [
-  { name: 'Haircut',    icon: 'Scissors' },
-  { name: 'Beard Trim', icon: 'ScissorsLineDashed' },
-  { name: 'Shave',      icon: 'Droplet' },
-  { name: 'Hair Wash',  icon: 'ShowerHead' },
-  { name: 'Styling',    icon: 'Wind' },
-  { name: 'Other',      icon: 'Sparkles' },
-];
-
 // Той самий набір іконок, що фронтенд пропонує у пікері — валідуємо проти
 // нього, щоб не зберегти довільний рядок, якого немає в lucide-react.
 const VALID_ICONS = [
@@ -23,10 +14,7 @@ const resolveIcon = (icon) => (VALID_ICONS.includes(icon) ? icon : 'Sparkles');
 router.get('/', async (req, res) => {
   const { Category } = req.models;
   try {
-    let categories = await Category.find().sort({ createdAt: 1 });
-    if (categories.length === 0) {
-      categories = await Category.insertMany(DEFAULT_CATEGORIES);
-    }
+    const categories = await Category.find().sort({ createdAt: 1 });
     res.json(categories);
   } catch (err) {
     handleRouteError(res, err, 'categories/list');
