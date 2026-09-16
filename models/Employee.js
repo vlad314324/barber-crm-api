@@ -6,6 +6,13 @@ const dayScheduleSchema = new mongoose.Schema({
   to:     { type: String, default: '18:00' },
 }, { _id: false });
 
+// Переклад bio/спеціалізацій майстра для однієї мови сторінки бронювання
+// (Settings.bookingLanguages). Ім'я майстра свідомо не перекладається.
+const employeeTranslationSchema = new mongoose.Schema({
+  bio: { type: String, default: '' },
+  specialties: [{ type: String }],
+}, { _id: false });
+
 const employeeSchema = new mongoose.Schema({
   name:        { type: String, required: true },
   phone:       { type: String, required: true },
@@ -18,6 +25,12 @@ const employeeSchema = new mongoose.Schema({
   isActive:    { type: Boolean, default: true },
   bio:         { type: String, default: '' },
   specialties: [{ type: String }],
+  // Ключ — код мови ('uk'/'en'/'cs'/'pl'), значення — переклад bio/specialties.
+  translations: {
+    type: Map,
+    of: employeeTranslationSchema,
+    default: () => new Map(),
+  },
   services:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
   rating:      { type: Number, default: 0 },
   reviewCount: { type: Number, default: 0 },

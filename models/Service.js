@@ -1,6 +1,14 @@
 // models/Service.js
 const mongoose = require('mongoose');
 
+// Переклад назви/опису послуги для однієї мови сторінки бронювання
+// (Settings.bookingLanguages). Базові поля name/description лишаються мовою
+// салону за замовчуванням — тут зберігаються лише додаткові мови.
+const serviceTranslationSchema = new mongoose.Schema({
+  name: { type: String, default: '' },
+  description: { type: String, default: '' },
+}, { _id: false });
+
 // Створення схеми для послуг
 const serviceSchema = new mongoose.Schema({
   name: {
@@ -10,6 +18,12 @@ const serviceSchema = new mongoose.Schema({
   description: {
     type: String,
     default: '',
+  },
+  // Ключ — код мови ('uk'/'en'/'cs'/'pl'), значення — переклад name/description.
+  translations: {
+    type: Map,
+    of: serviceTranslationSchema,
+    default: () => new Map(),
   },
   price: {
     type: Number,
