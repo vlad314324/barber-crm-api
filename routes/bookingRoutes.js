@@ -32,6 +32,19 @@ router.get('/services', async (req, res) => {
   }
 });
 
+// POST /api/:salonSlug/booking/visit — фіксує факт відкриття сторінки
+// бронювання (для конверсії "переходи → бронювання" в панелі платформного
+// адміна). Рахуємо кожне завантаження сторінки як один візит, без
+// дедуплікації по відвідувачу.
+router.post('/visit', async (req, res) => {
+  try {
+    await req.models.Visit.create({});
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    handleRouteError(res, err, 'booking/visit');
+  }
+});
+
 // GET /api/:salonSlug/booking/settings — публічний брендинг сторінки бронювання
 router.get('/settings', async (req, res) => {
   const { Settings } = req.models;
@@ -246,6 +259,7 @@ router.post('/', async (req, res) => {
       totalPrice,
       status: 'Scheduled',
       preferredLang,
+      source: 'public',
     });
 
     // Лист і сповіщення надсилаємо без очікування (SMTP-хендшейк буває

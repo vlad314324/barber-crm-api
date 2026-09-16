@@ -7,8 +7,9 @@ const Review = require('./Review');
 const Settings = require('./Settings');
 const User = require('./User');
 const Notification = require('./Notification');
+const Visit = require('./Visit');
 
-const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification };
+const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, Visit };
 
 function getModels(connection) {
   const models = {};

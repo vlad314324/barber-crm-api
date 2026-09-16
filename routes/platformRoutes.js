@@ -7,10 +7,32 @@ const Salon = require('../models/platform/Salon');
 const Invitation = require('../models/platform/Invitation');
 const verifyPlatformAdmin = require('../middleware/verifyPlatformAdmin');
 const { sendSalonDeactivatedEmail } = require('../config/mailer');
+const { getTenantContext } = require('../config/tenantDb');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 const INVITATION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 днів
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+// Будує масив останніх `days` календарних днів (включно з сьогодні) з
+// лічильниками візитів/бронювань по кожному дню — для тренд-графіка.
+// Рахуємо в JS замість Mongo-агрегації: дані невеликі, а так простіше й
+// узгоджується зі стилем решти проєкту (без агрегаційних пайплайнів там,
+// де без них цілком можна обійтись).
+function buildDailyTrend(visits, bookings, days) {
+  const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
+  const visitCounts = {};
+  visits.forEach((v) => { const k = dayKey(v.createdAt); visitCounts[k] = (visitCounts[k] || 0) + 1; });
+  const bookingCounts = {};
+  bookings.forEach((b) => { const k = dayKey(b.createdAt); bookingCounts[k] = (bookingCounts[k] || 0) + 1; });
+
+  const trend = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    const key = dayKey(d);
+    trend.push({ date: key, visits: visitCounts[key] || 0, bookings: bookingCounts[key] || 0 });
+  }
+  return trend;
+}
 
 const signPlatformToken = (admin) =>
   jwt.sign({ id: admin._id }, process.env.PLATFORM_JWT_SECRET, { expiresIn: '7d' });
@@ -99,6 +121,37 @@ router.get('/salons', verifyPlatformAdmin, async (req, res) => {
     res.json(salons.map(serializeSalon));
   } catch (err) {
     handleRouteError(res, err, 'platform/salons-list');
+  }
+});
+
+// GET /api/platform/salons/:id/analytics — конверсія "переходи → бронювання"
+// по публічному лінку цього салону. Єдине місце, де платформний роут заходить
+// у власну tenant-БД салону (через getTenantContext), а не лише в платформну.
+router.get('/salons/:id/analytics', verifyPlatformAdmin, async (req, res) => {
+  try {
+    const salon = await Salon.findById(req.params.id);
+    if (!salon) return sendError(res, 404, ERROR_CODES.SALON_NOT_FOUND, 'Салон не знайдено');
+
+    const { models } = await getTenantContext(salon.dbName);
+    const totalVisits = await models.Visit.countDocuments();
+    const totalBookings = await models.Appointment.countDocuments({ source: 'public' });
+
+    const TREND_DAYS = 14;
+    const since = new Date(Date.now() - TREND_DAYS * 24 * 60 * 60 * 1000);
+    const [recentVisits, recentBookings] = await Promise.all([
+      models.Visit.find({ createdAt: { $gte: since } }).select('createdAt'),
+      models.Appointment.find({ source: 'public', createdAt: { $gte: since } }).select('createdAt'),
+    ]);
+    const dailyTrend = buildDailyTrend(recentVisits, recentBookings, TREND_DAYS);
+
+    res.json({
+      totalVisits,
+      totalBookings,
+      conversionRate: totalVisits > 0 ? totalBookings / totalVisits : 0,
+      dailyTrend,
+    });
+  } catch (err) {
+    handleRouteError(res, err, 'platform/salons-analytics');
   }
 });
 

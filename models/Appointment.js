@@ -37,6 +37,15 @@ const appointmentSchema = new mongoose.Schema({
     enum: ['Scheduled', 'Completed', 'Cancelled', 'No-show'],
     default: 'Scheduled'
   },
+  // Звідки з'явився запис — з публічної сторінки бронювання чи вручну від
+  // персоналу. Потрібно для конверсії "переходи → бронювання" в панелі
+  // платформного адміна (routes/platformRoutes.js) — рахуємо там лише
+  // 'public', а не всі записи підряд.
+  source: {
+    type: String,
+    enum: ['public', 'admin'],
+    default: 'admin'
+  },
   // Мова клієнта на момент бронювання — використовується для вибору мовного
   // шаблону email/SMS-сповіщень (підтвердження, нагадування).
   preferredLang: {
@@ -59,6 +68,6 @@ const appointmentSchema = new mongoose.Schema({
     authorRole: { type: String },
     createdAt:  { type: Date, default: Date.now },
   }]
-});
+}, { timestamps: true }); // createdAt тут — момент БРОНЮВАННЯ (не плутати з `date`, датою самого візиту)
 
 module.exports = appointmentSchema;
