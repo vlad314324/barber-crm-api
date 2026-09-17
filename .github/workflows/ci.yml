@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax-check every backend source file
+        run: find . -name '*.js' -not -path './node_modules/*' -not -path './test/*' -print0 | xargs -0 -n1 node -c
+
+      # Hits the same MongoDB Atlas cluster the app itself uses (there is no
+      # separate dev/CI database) — each test creates and tears down its own
+      # isolated throwaway tenant. Requires the MONGO_URI and JWT_SECRET
+      # repository secrets to be configured (Settings -> Secrets and
+      # variables -> Actions) for this job to run at all.
+      - name: Run regression tests
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: npm test

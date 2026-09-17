@@ -1,0 +1,41 @@
+// Чиста побудова Express app — без connectDB()/app.listen()/cron, щоб тести
+// могли підняти цей самий app на ефемерному порту (app.listen(0)) без
+// побічних ефектів продакшн-запуску. server.js — тонка точка входу, яка
+// імпортує цей файл і додає запуск.
+const express = require('express');
+const cors = require('cors');
+const tenantResolver = require('./middleware/tenantResolver');
+const verifyToken = require('./middleware/verifyToken');
+
+const app = express();
+
+// Render стоїть за одним reverse-proxy hop — без цього express-rate-limit
+// або бачить IP самого proxy для всіх запитів (ліміт стає спільним на
+// всіх), або (у v8+) взагалі відмовляється рахувати ліміти при наявності
+// X-Forwarded-For без довіри до проксі.
+app.set('trust proxy', 1);
+
+app.use(cors());
+app.use(express.json());
+
+const tenantRouter = express.Router({ mergeParams: true });
+tenantRouter.use(tenantResolver);
+tenantRouter.use('/auth', require('./routes/authRoutes'));
+tenantRouter.use('/clients', verifyToken, require('./routes/clientRoutes'));
+tenantRouter.use('/employees', verifyToken, require('./routes/employeeRoutes'));
+tenantRouter.use('/appointments', verifyToken, require('./routes/appointmentRoutes'));
+tenantRouter.use('/services', verifyToken, require('./routes/serviceRoutes'));
+tenantRouter.use('/categories', verifyToken, require('./routes/categoryRoutes'));
+tenantRouter.use('/reviews', verifyToken, require('./routes/reviewRoutes'));
+tenantRouter.use('/booking', require('./routes/bookingRoutes'));
+tenantRouter.use('/settings', verifyToken, require('./routes/settingsRoutes'));
+tenantRouter.use('/notifications', verifyToken, require('./routes/notificationRoutes'));
+tenantRouter.use('/analytics', verifyToken, require('./routes/analyticsRoutes'));
+
+app.use('/api/salons', require('./routes/salonRoutes'));
+app.use('/api/platform', require('./routes/platformRoutes'));
+app.use('/api/:salonSlug', tenantRouter);
+
+app.get('/', (req, res) => res.send('BarberCRM API is running'));
+
+module.exports = app;

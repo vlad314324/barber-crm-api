@@ -122,7 +122,15 @@ Authorization: Bearer <token>
 | `node scripts/registerFirstTenant.js --slug=<slug> --name="<Name>" [--dbName=barbershop] [--ownerEmail=...]` | Register an existing Mongo DB as the first salon in the platform registry (does not copy data) |
 | `node scripts/migrateEmployeeSchedule.js` | One-off employee schedule migration |
 
-There is no real test suite — `npm test` is a placeholder that exits with an error.
+`npm test` runs the regression suite (`test/*.test.js`, Node's built-in test
+runner — no extra framework). These hit the same MongoDB Atlas cluster the
+app itself uses (there is no separate dev/CI database); each test creates
+and tears down its own isolated throwaway tenant, so it's safe to run
+against the real cluster. Requires `MONGO_URI` and `JWT_SECRET` to be set
+(same `.env` used for local dev works). CI (`.github/workflows/ci.yml`)
+runs this plus a syntax check on every push/PR to `main` — it needs those
+two as repository secrets (Settings → Secrets and variables → Actions) to
+pass.
 
 ## Project structure
 
