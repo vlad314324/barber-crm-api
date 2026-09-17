@@ -6,6 +6,7 @@ const Salon = require('../models/platform/Salon');
 const Invitation = require('../models/platform/Invitation');
 const { getTenantContext } = require('../config/tenantDb');
 const { slugify } = require('../utils/slugify');
+const { salonRegisterLimiter } = require('../middleware/rateLimit');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 
 // Макс. 32 символи: dbName = `salon_${slug}` (префікс 6 байт), а MongoDB
@@ -31,7 +32,7 @@ router.get('/invitations/:token', async (req, res) => {
 });
 
 // POST /api/salons/register — реєстрація нового салону, лише за дійсним запрошенням
-router.post('/register', async (req, res) => {
+router.post('/register', salonRegisterLimiter, async (req, res) => {
   const { salonName, ownerName, ownerEmail, ownerPassword, token } = req.body;
   let { slug } = req.body;
 

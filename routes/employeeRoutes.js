@@ -256,11 +256,34 @@ router.post('/:id/reactivate', requireRole('admin'), async (req, res) => {
   }
 });
 
+// DELETE /employees/:id — дозволено лише для майстра без жодної історії
+// (записів/відгуків); інакше hard delete лишив би биті посилання в
+// календарі. Для звільнення майстра з історією призначений
+// POST /:id/deactivate (він же блокує й пов'язаний логін) — тут лише
+// підказуємо про це в повідомленні.
 router.delete('/:id', requireRole('admin'), async (req, res) => {
-  const { Employee } = req.models;
+  const { Employee, Appointment, Review, User } = req.models;
   try {
-    const employee = await Employee.findByIdAndDelete(req.params.id);
+    const employee = await Employee.findById(req.params.id);
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+
+    const [appointmentCount, reviewCount] = await Promise.all([
+      Appointment.countDocuments({ employee: employee._id }),
+      Review.countDocuments({ employee: employee._id }),
+    ]);
+    if (appointmentCount > 0 || reviewCount > 0) {
+      return sendError(res, 400, ERROR_CODES.EMPLOYEE_HAS_HISTORY,
+        `У майстра є історія записів (${appointmentCount}) або відгуків (${reviewCount}) — видалення заблоковано. Скористайтесь деактивацією`,
+        { appointmentCount, reviewCount });
+    }
+
+    // Немає історії — але може лишитись логін, яким досі можна увійти в CRM
+    // під роллю цього майстра, навіть коли самого Employee вже нема.
+    if (employee.userId) {
+      await User.findByIdAndDelete(employee.userId);
+    }
+
+    await employee.deleteOne();
     res.json({ msg: 'Майстра видалено' });
   } catch (err) {
     handleRouteError(res, err, 'employees/delete');

@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const verifyToken = require('../middleware/verifyToken');
+const { loginLimiter, forgotPasswordLimiter, resetPasswordLimiter } = require('../middleware/rateLimit');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { sendPasswordResetEmail } = require('../config/mailer');
 
@@ -91,7 +92,7 @@ router.put('/staff/:employeeId', verifyToken, async (req, res) => {
 });
 
 // POST /api/:salonSlug/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { User } = req.models;
   const { email, password } = req.body;
 
@@ -123,16 +124,21 @@ router.post('/login', async (req, res) => {
 router.get('/me', verifyToken, async (req, res) => {
   const { User } = req.models;
   try {
-    const user = await User.findById(req.user.id).select('-password -resetPasswordTokenHash -resetPasswordExpires');
+    const user = await User.findById(req.user.id);
     if (!user) return sendError(res, 404, ERROR_CODES.USER_NOT_FOUND, 'Користувача не знайдено');
-    res.json(user);
+    // Той самий плаский формат, що й у login/register — { id, ... }, а не
+    // сирий Mongoose-документ. `_id` там не серіалізується у власний `id`
+    // (toJSON virtuals вимкнено), тож інакше на фронтенді user.id ставав би
+    // undefined після перезавантаження сторінки (яке саме через /me бере
+    // сесію) — хоча по логіну/реєстрації user.id працював коректно.
+    res.json({ id: user._id, name: user.name, email: user.email, role: user.role });
   } catch (err) {
     handleRouteError(res, err, 'auth/me');
   }
 });
 
 // POST /api/:salonSlug/auth/forgot-password
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
   const { User } = req.models;
   const { email, lang } = req.body;
 
@@ -168,7 +174,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // POST /api/:salonSlug/auth/reset-password
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', resetPasswordLimiter, async (req, res) => {
   const { User } = req.models;
   const { token, password } = req.body;
 

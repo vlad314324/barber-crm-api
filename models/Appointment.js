@@ -70,4 +70,13 @@ const appointmentSchema = new mongoose.Schema({
   }]
 }, { timestamps: true }); // createdAt тут — момент БРОНЮВАННЯ (не плутати з `date`, датою самого візиту)
 
+// Найгарячіший шлях: перевірка перекриття й available-slots фільтрують саме
+// за (employee, date) на кожен запит бронювання (routes/bookingRoutes.js,
+// utils/appointmentOverlap.js).
+appointmentSchema.index({ employee: 1, date: 1 });
+// Історія записів клієнта (routes/clientRoutes.js) і виписка reminderJob.js
+// за датою — без цих індексів обидва запити йшли б повним сканом колекції.
+appointmentSchema.index({ client: 1 });
+appointmentSchema.index({ date: 1 });
+
 module.exports = appointmentSchema;

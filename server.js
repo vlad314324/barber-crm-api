@@ -8,6 +8,12 @@ const verifyToken = require('./middleware/verifyToken');
 
 const app = express();
 
+// Render стоїть за одним reverse-proxy hop — без цього express-rate-limit
+// або бачить IP самого proxy для всіх запитів (ліміт стає спільним на
+// всіх), або (у v8+) взагалі відмовляється рахувати ліміти при наявності
+// X-Forwarded-For без довіри до проксі.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
 

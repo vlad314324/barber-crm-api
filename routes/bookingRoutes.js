@@ -6,6 +6,7 @@ const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { hasOverlap } = require('../utils/appointmentOverlap');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
+const { publicBookingLimiter } = require('../middleware/rateLimit');
 
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
@@ -174,7 +175,7 @@ router.get('/available-slots', async (req, res) => {
 });
 
 // POST /api/:salonSlug/booking — створити запис
-router.post('/', async (req, res) => {
+router.post('/', publicBookingLimiter, async (req, res) => {
   const { Employee, Service, Appointment, Client, Settings } = req.models;
   const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang } = req.body;
 

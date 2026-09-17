@@ -9,6 +9,11 @@ const { formatDurationRange } = require('../utils/duration');
 const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
 const BREVO_SENDER = { name: 'hirnix', email: process.env.EMAIL_USER };
 
+// Без явного дедлайну fetch чекав би на Brevo необмежено довго при
+// зависанні їхнього боку — це тримало б відкритим і публічний запит
+// бронювання (доки лист "надсилається" у фоні), і тік cron-нагадувань.
+const BREVO_TIMEOUT_MS = 10000;
+
 const sendMail = async ({ to, subject, html }) => {
   const res = await fetch(BREVO_API_URL, {
     method: 'POST',
@@ -23,6 +28,7 @@ const sendMail = async ({ to, subject, html }) => {
       subject,
       htmlContent: html,
     }),
+    signal: AbortSignal.timeout(BREVO_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');

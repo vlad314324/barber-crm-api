@@ -19,24 +19,44 @@ const CLIENT_IMPORT_COLUMNS = [
   { header: 'Email', key: 'email', aliases: ['Пошта', 'Е-пошта', 'E-mail'], required: true },
 ];
 
+// Один запит замість одного на клієнта (N+1): підвантажує завершені записи
+// для всіх переданих clientId одразу й групує в JS. Сортування за спаданням
+// дати збережено — тому перше входження на клієнта в carті вже і є
+// найостаннішим візитом, як і в оригінальній for-each-client логіці.
+async function computeClientStats(Appointment, clientIds) {
+  const appointments = await Appointment.find({
+    client: { $in: clientIds },
+    status: 'Completed',
+  }).sort({ date: -1 }).select('client date');
+
+  const stats = new Map(); // clientId (string) -> { visits, lastVisit }
+  for (const apt of appointments) {
+    const key = String(apt.client);
+    const entry = stats.get(key);
+    if (entry) {
+      entry.visits += 1;
+    } else {
+      stats.set(key, { visits: 1, lastVisit: apt.date });
+    }
+  }
+  return stats;
+}
+
 // GET all clients — з підрахунком візитів
 router.get('/', async (req, res) => {
   const { Client, Appointment } = req.models;
   try {
     const clients = await Client.find().sort({ createdAt: -1 });
+    const stats = await computeClientStats(Appointment, clients.map((c) => c._id));
 
-    const clientsWithStats = await Promise.all(clients.map(async (client) => {
-      const appointments = await Appointment.find({
-        client: client._id,
-        status: 'Completed'
-      }).sort({ date: -1 });
-
+    const clientsWithStats = clients.map((client) => {
+      const s = stats.get(String(client._id));
       return {
         ...client.toObject(),
-        visits: appointments.length,
-        lastVisit: appointments[0]?.date || null,
+        visits: s?.visits || 0,
+        lastVisit: s?.lastVisit || null,
       };
-    }));
+    });
 
     res.json(clientsWithStats);
   } catch (err) {
@@ -49,17 +69,19 @@ router.get('/export', requireRole('admin'), async (req, res) => {
   const { Client, Appointment } = req.models;
   try {
     const clients = await Client.find().sort({ createdAt: -1 });
-    const rows = await Promise.all(clients.map(async (client) => {
-      const appointments = await Appointment.find({ client: client._id, status: 'Completed' }).sort({ date: -1 });
+    const stats = await computeClientStats(Appointment, clients.map((c) => c._id));
+
+    const rows = clients.map((client) => {
+      const s = stats.get(String(client._id));
       return {
         id: String(client._id),
         name: client.name,
         phone: client.phone,
         email: client.email,
-        visits: appointments.length,
-        lastVisit: appointments[0]?.date ? new Date(appointments[0].date).toISOString().slice(0, 10) : '',
+        visits: s?.visits || 0,
+        lastVisit: s?.lastVisit ? new Date(s.lastVisit).toISOString().slice(0, 10) : '',
       };
-    }));
+    });
 
     const buffer = buildWorkbookBuffer(rows, CLIENT_EXPORT_COLUMNS, 'Clients');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -188,10 +210,25 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
 
 // DELETE client
 router.delete('/:id', requireRole('admin'), async (req, res) => {
-  const { Client } = req.models;
+  const { Client, Appointment, Review } = req.models;
   try {
-    const client = await Client.findByIdAndDelete(req.params.id);
+    const client = await Client.findById(req.params.id);
     if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+
+    // Hard delete лишав би записи/відгуки з посиланням на неіснуючого
+    // клієнта (biті посилання в календарі, крах при рендері). Замість
+    // видалення історії — просто не дозволяємо видалити клієнта, поки вона є.
+    const [appointmentCount, reviewCount] = await Promise.all([
+      Appointment.countDocuments({ client: client._id }),
+      Review.countDocuments({ client: client._id }),
+    ]);
+    if (appointmentCount > 0 || reviewCount > 0) {
+      return sendError(res, 400, ERROR_CODES.CLIENT_HAS_HISTORY,
+        `У клієнта є історія записів (${appointmentCount}) або відгуків (${reviewCount}) — видалення заблоковано, щоб не зіпсувати календар`,
+        { appointmentCount, reviewCount });
+    }
+
+    await client.deleteOne();
     res.json({ msg: 'Клієнта видалено' });
   } catch (err) {
     handleRouteError(res, err, 'clients/delete');
