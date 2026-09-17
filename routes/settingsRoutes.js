@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const requireRole = require('../middleware/requireRole');
 
 // GET /api/:salonSlug/settings — отримати налаштування
 router.get('/', async (req, res) => {
@@ -17,7 +18,7 @@ router.get('/', async (req, res) => {
 });
 
 // PUT /api/:salonSlug/settings — оновити налаштування
-router.put('/', async (req, res) => {
+router.put('/', requireRole('admin'), async (req, res) => {
   const { Settings } = req.models;
   try {
     let settings = await Settings.findOne();
@@ -51,12 +52,14 @@ router.put('/', async (req, res) => {
   }
 });
 
-// PUT /api/:salonSlug/settings/change-password
+// PUT /api/:salonSlug/settings/change-password — self-service: завжди міняє
+// пароль автентифікованого користувача (з токена), а не довільного userId,
+// переданого в тілі запиту.
 router.put('/change-password', async (req, res) => {
   const { User } = req.models;
-  const { userId, currentPassword, newPassword } = req.body;
+  const { currentPassword, newPassword } = req.body;
 
-  const missing = firstMissingField(req.body, ['userId', 'currentPassword', 'newPassword']);
+  const missing = firstMissingField(req.body, ['currentPassword', 'newPassword']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
@@ -65,7 +68,7 @@ router.put('/change-password', async (req, res) => {
   }
 
   try {
-    const user = await User.findById(userId);
+    const user = await User.findById(req.user.id);
     if (!user) return sendError(res, 404, ERROR_CODES.USER_NOT_FOUND, 'Користувача не знайдено');
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) return sendError(res, 400, ERROR_CODES.INVALID_CURRENT_PASSWORD, 'Невірний поточний пароль');

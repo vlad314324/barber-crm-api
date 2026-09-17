@@ -1,6 +1,10 @@
 const express = require('express');
 const router  = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const requireRole = require('../middleware/requireRole');
+
+// Використовується лише на admin-only сторінці Employees.tsx.
+router.use(requireRole('admin'));
 
 router.get('/', async (req, res) => {
   const { Review } = req.models;

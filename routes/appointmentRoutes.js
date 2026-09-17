@@ -2,11 +2,15 @@ const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
+const { hasOverlap } = require('../utils/appointmentOverlap');
+const { withEmployeeDayLock } = require('../utils/appointmentLock');
+const { TIME_RE, parseCalendarDate } = require('../utils/scheduleWindow');
 const {
   buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, parseFlexibleDate,
   resolveAlias, STATUS_ALIASES,
 } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
+const requireRole = require('../middleware/requireRole');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -52,7 +56,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /appointments/export
-router.get('/export', async (req, res) => {
+router.get('/export', requireRole('admin'), async (req, res) => {
   const { Appointment } = req.models;
   try {
     const appointments = await Appointment.find()
@@ -79,7 +83,7 @@ router.get('/export', async (req, res) => {
 });
 
 // POST /appointments/import
-router.post('/import', importUpload('file'), async (req, res) => {
+router.post('/import', requireRole('admin'), importUpload('file'), async (req, res) => {
   const { Appointment, Client, Employee, Service, Settings } = req.models;
   const settings = await Settings.findOne();
   const rangesEnabled = !!settings?.serviceRangesEnabled;
@@ -150,13 +154,34 @@ router.post('/import', importUpload('file'), async (req, res) => {
       };
 
       const id = String(row.id || '').trim();
-      if (id) {
-        const updatedDoc = await Appointment.findByIdAndUpdate(id, doc, { runValidators: true });
-        if (!updatedDoc) throw new Error(`Запис з ID "${id}" не знайдено — не оновлено`);
-        updated++;
+
+      // Той самий лок+перевірка перекриття, що й ручне створення/перенесення
+      // — імпорт не повинен мати змогу створити подвійне бронювання лише
+      // тому, що йде іншим шляхом. Скасовані записи не резервують час.
+      // Перевірка і сам запис — усередині лока, без розриву між ними.
+      const writeRow = async () => {
+        if (id) {
+          const updatedDoc = await Appointment.findByIdAndUpdate(id, doc, { runValidators: true });
+          if (!updatedDoc) throw new Error(`Запис з ID "${id}" не знайдено — не оновлено`);
+          updated++;
+        } else {
+          await new Appointment(doc).save();
+          created++;
+        }
+      };
+
+      if (status === 'Cancelled') {
+        await writeRow();
       } else {
-        await new Appointment(doc).save();
-        created++;
+        const conflict = await withEmployeeDayLock(req.models, employee._id, dateValue, async () => {
+          const overlap = await hasOverlap(req.models, {
+            employeeId: employee._id, dateObj: dateValue, startTime, totalDuration,
+            excludeAppointmentId: id || undefined,
+          });
+          if (!overlap) await writeRow();
+          return overlap;
+        });
+        if (conflict) throw new Error('Цей час уже зайнято іншим записом');
       }
     } catch (err) {
       failed++;
@@ -191,6 +216,14 @@ router.post('/', async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  // Лише гігієна формату — персонал у CRM свідомо не обмежений графіком
+  // роботи (walk-in поза графіком, запис заднім числом тощо).
+  if (!TIME_RE.test(startTime)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_TIME_FORMAT, 'Некоректний час початку', { field: 'startTime' });
+  }
+  if (!parseCalendarDate(date)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
+  }
 
   try {
     if (Array.isArray(services) && services.length > 0) {
@@ -201,12 +234,33 @@ router.post('/', async (req, res) => {
       }
     }
 
-    const newAppointment = new Appointment({
-      client, employee, services, date, startTime, totalDuration, totalPrice, status
-    });
-    const saved = await newAppointment.save();
+    const effectiveStatus = status || 'Scheduled';
+    const create = async () => {
+      const newAppointment = new Appointment({ client, employee, services, date, startTime, totalDuration, totalPrice, status });
+      return newAppointment.save();
+    };
+
+    let saved;
+    if (effectiveStatus === 'Cancelled') {
+      saved = await create();
+    } else {
+      const lockResult = await withEmployeeDayLock(req.models, employee, date, async () => {
+        if (await hasOverlap(req.models, { employeeId: employee, dateObj: new Date(date), startTime, totalDuration })) {
+          return { conflict: true };
+        }
+        return { conflict: false, appointment: await create() };
+      });
+      if (lockResult.conflict) {
+        return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
+      }
+      saved = lockResult.appointment;
+    }
+
     res.json(saved);
   } catch (err) {
+    if (err.code === 'LOCK_TIMEOUT') {
+      return sendError(res, 409, ERROR_CODES.BOOKING_BUSY, 'Забагато одночасних спроб — спробуйте ще раз');
+    }
     handleRouteError(res, err, 'appointments/create');
   }
 });
@@ -214,9 +268,20 @@ router.post('/', async (req, res) => {
 // PUT update appointment
 router.put('/:id', async (req, res) => {
   const { Appointment, Employee } = req.models;
+  // Лише гігієна формату, коли тіло реально чіпає ці поля — CRM свідомо не
+  // обмежений графіком роботи при перенесенні запису.
+  if (req.body.startTime !== undefined && !TIME_RE.test(req.body.startTime)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_TIME_FORMAT, 'Некоректний час початку', { field: 'startTime' });
+  }
+  if (req.body.date !== undefined && !parseCalendarDate(req.body.date)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
+  }
   try {
+    const existing = await Appointment.findById(req.params.id);
+    if (!existing) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
-      const effectiveEmployeeId = req.body.employee || (await Appointment.findById(req.params.id))?.employee;
+      const effectiveEmployeeId = req.body.employee || existing.employee;
       if (effectiveEmployeeId) {
         const empDoc = await Employee.findById(effectiveEmployeeId);
         if (empDoc && !canEmployeePerformServices(empDoc, req.body.services)) {
@@ -225,10 +290,41 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    const updated = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
-    if (!updated) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+    // Перевірку перекриття робимо лише тоді, коли тіло реально чіпає
+    // розклад запису (дату/час/майстра/тривалість) — і не для скасування,
+    // бо звільнення слоту конфлікту не створює.
+    const touchesSchedule = ['date', 'startTime', 'employee', 'totalDuration'].some((f) => req.body[f] !== undefined);
+    const effectiveStatus = req.body.status !== undefined ? req.body.status : existing.status;
+
+    let updated;
+    if (touchesSchedule && effectiveStatus !== 'Cancelled') {
+      const effectiveEmployeeId = req.body.employee ?? existing.employee;
+      const effectiveDate = req.body.date ?? existing.date;
+      const effectiveStartTime = req.body.startTime ?? existing.startTime;
+      const effectiveDuration = req.body.totalDuration ?? existing.totalDuration;
+
+      const lockResult = await withEmployeeDayLock(req.models, effectiveEmployeeId, effectiveDate, async () => {
+        const conflict = await hasOverlap(req.models, {
+          employeeId: effectiveEmployeeId, dateObj: new Date(effectiveDate),
+          startTime: effectiveStartTime, totalDuration: effectiveDuration,
+          excludeAppointmentId: req.params.id,
+        });
+        if (conflict) return { conflict: true };
+        return { conflict: false, appointment: await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }) };
+      });
+      if (lockResult.conflict) {
+        return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
+      }
+      updated = lockResult.appointment;
+    } else {
+      updated = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    }
+
     res.json(updated);
   } catch (err) {
+    if (err.code === 'LOCK_TIMEOUT') {
+      return sendError(res, 409, ERROR_CODES.BOOKING_BUSY, 'Забагато одночасних спроб — спробуйте ще раз');
+    }
     handleRouteError(res, err, 'appointments/update');
   }
 });
@@ -257,7 +353,7 @@ router.post('/:id/notes', async (req, res) => {
 });
 
 // DELETE appointment
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const { Appointment } = req.models;
   try {
     const appointment = await Appointment.findById(req.params.id);

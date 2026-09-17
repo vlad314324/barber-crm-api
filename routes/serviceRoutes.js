@@ -6,6 +6,7 @@ const {
   resolveAlias, CATEGORY_ALIASES,
 } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
+const requireRole = require('../middleware/requireRole');
 
 const SERVICE_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -40,7 +41,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /services/export
-router.get('/export', async (req, res) => {
+router.get('/export', requireRole('admin'), async (req, res) => {
   const { Service } = req.models;
   try {
     const services = await Service.find().sort({ category: 1, name: 1 });
@@ -61,7 +62,7 @@ router.get('/export', async (req, res) => {
 });
 
 // POST /services/import
-router.post('/import', importUpload('file'), async (req, res) => {
+router.post('/import', requireRole('admin'), importUpload('file'), async (req, res) => {
   const { Service, Category, Settings } = req.models;
   const settings = await Settings.findOne();
   const rangesEnabled = !!settings?.serviceRangesEnabled;
@@ -148,7 +149,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireRole('admin'), async (req, res) => {
   const { Service, Category, Settings } = req.models;
   const missing = firstMissingField(req.body, ['name', 'price', 'duration', 'category']);
   if (missing) {
@@ -183,7 +184,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('admin'), async (req, res) => {
   const { Service, Category, Settings } = req.models;
   try {
     if (req.body.category !== undefined) {
@@ -221,7 +222,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const { Service } = req.models;
   try {
     const service = await Service.findByIdAndDelete(req.params.id);

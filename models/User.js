@@ -9,12 +9,18 @@ const UserSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true },
   resetPasswordTokenHash: { type: String },
   resetPasswordExpires: { type: Date },
+  // Момент останньої зміни пароля — verifyToken звіряє з ним `iat` токена,
+  // щоб токени, видані ДО зміни пароля, переставали працювати одразу
+  // (а не чекали спливання строку дії).
+  passwordChangedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 
-// Хешуємо пароль перед збереженням
+// Хешуємо пароль перед збереженням, фіксуємо момент зміни для інвалідації
+// раніше виданих токенів (verifyToken.js)
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
   this.password = await bcrypt.hash(this.password, 10);
+  this.passwordChangedAt = new Date();
   next();
 });
 

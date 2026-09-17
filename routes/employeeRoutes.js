@@ -3,6 +3,7 @@ const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, resolveAlias, ROLE_ALIASES } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
+const requireRole = require('../middleware/requireRole');
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_HEADERS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
@@ -61,7 +62,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /employees/export
-router.get('/export', async (req, res) => {
+router.get('/export', requireRole('admin'), async (req, res) => {
   const { Employee } = req.models;
   try {
     const employees = await Employee.find().sort({ createdAt: -1 });
@@ -93,7 +94,7 @@ router.get('/export', async (req, res) => {
 });
 
 // POST /employees/import
-router.post('/import', importUpload('file'), async (req, res) => {
+router.post('/import', requireRole('admin'), importUpload('file'), async (req, res) => {
   const { Employee } = req.models;
   let rows, missingRequired;
   try {
@@ -167,7 +168,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireRole('admin'), async (req, res) => {
   const { Employee, Service } = req.models;
   const missing = firstMissingField(req.body, ['name', 'phone', 'email', 'role', 'hourlyRate']);
   if (missing) {
@@ -193,7 +194,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('admin'), async (req, res) => {
   const { Employee, Service } = req.models;
   try {
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
@@ -216,7 +217,7 @@ router.put('/:id', async (req, res) => {
 // POST /employees/:id/deactivate — ховає співробітника з активних списків
 // (бронювання, дропдаун майстра) і блокує новий логін пов'язаного User,
 // але зберігає документ Employee та всю історію Appointment без змін.
-router.post('/:id/deactivate', async (req, res) => {
+router.post('/:id/deactivate', requireRole('admin'), async (req, res) => {
   const { Employee, User } = req.models;
   try {
     const employee = await Employee.findById(req.params.id);
@@ -236,7 +237,7 @@ router.post('/:id/deactivate', async (req, res) => {
 });
 
 // POST /employees/:id/reactivate
-router.post('/:id/reactivate', async (req, res) => {
+router.post('/:id/reactivate', requireRole('admin'), async (req, res) => {
   const { Employee, User } = req.models;
   try {
     const employee = await Employee.findById(req.params.id);
@@ -255,7 +256,7 @@ router.post('/:id/reactivate', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const { Employee } = req.models;
   try {
     const employee = await Employee.findByIdAndDelete(req.params.id);

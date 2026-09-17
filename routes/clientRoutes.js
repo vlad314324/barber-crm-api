@@ -3,6 +3,7 @@ const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { buildWorkbookBuffer, parseWorkbookBuffer } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
+const requireRole = require('../middleware/requireRole');
 
 const CLIENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -44,7 +45,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /clients/export
-router.get('/export', async (req, res) => {
+router.get('/export', requireRole('admin'), async (req, res) => {
   const { Client, Appointment } = req.models;
   try {
     const clients = await Client.find().sort({ createdAt: -1 });
@@ -70,7 +71,7 @@ router.get('/export', async (req, res) => {
 });
 
 // POST /clients/import
-router.post('/import', importUpload('file'), async (req, res) => {
+router.post('/import', requireRole('admin'), importUpload('file'), async (req, res) => {
   const { Client } = req.models;
   let rows, missingRequired;
   try {
@@ -170,7 +171,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update client
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('admin'), async (req, res) => {
   const { Client } = req.models;
   try {
     const client = await Client.findByIdAndUpdate(
@@ -186,7 +187,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE client
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const { Client } = req.models;
   try {
     const client = await Client.findByIdAndDelete(req.params.id);

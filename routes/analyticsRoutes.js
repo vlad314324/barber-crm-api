@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { handleRouteError } = require('../utils/errorCodes');
+const requireRole = require('../middleware/requireRole');
+
+// Використовується лише на admin-only сторінці Reports.tsx.
+router.use(requireRole('admin'));
 
 // GET /api/:salonSlug/analytics/dashboard
 router.get('/dashboard', async (req, res) => {

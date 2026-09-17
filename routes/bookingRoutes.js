@@ -3,9 +3,11 @@ const { sendBookingConfirmation, sendEmployeeBookingNotification } = require('..
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
+const { hasOverlap } = require('../utils/appointmentOverlap');
+const { withEmployeeDayLock } = require('../utils/appointmentLock');
+const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
 
-const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-const EMPLOYEE_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
 // GET /api/:salonSlug/booking/services
 router.get('/services', async (req, res) => {
@@ -58,11 +60,15 @@ router.get('/settings', async (req, res) => {
   }
 });
 
-// GET /api/:salonSlug/booking/employees
+// GET /api/:salonSlug/booking/employees — публічний, без автентифікації.
+// Явний allowlist полів (а не повний документ): phone/email/hourlyRate/
+// userId/schedule/rating тощо — внутрішні дані персоналу, сторінці
+// бронювання не потрібні й не повинні бути видимі анонімному відвідувачу.
 router.get('/employees', async (req, res) => {
   const { Employee } = req.models;
   try {
-    const employees = await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } });
+    const employees = await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } })
+      .select('name role customRoleLabel bio specialties translations services');
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'booking/employees');
@@ -71,11 +77,14 @@ router.get('/employees', async (req, res) => {
 
 // GET /api/:salonSlug/booking/available-slots?employeeId=...&date=...
 router.get('/available-slots', async (req, res) => {
-  const { Appointment, Settings } = req.models;
+  const { Appointment, Settings, Employee } = req.models;
   const { employeeId, date, durationMinutes } = req.query;
   const missing = firstMissingField(req.query, ['employeeId', 'date']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+  if (!parseCalendarDate(date)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
   }
 
   // Необов'язковий параметр — сума потрібної тривалості обраних послуг
@@ -91,28 +100,21 @@ router.get('/available-slots', async (req, res) => {
   }
 
   try {
-    // Отримуємо налаштування годин роботи
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
 
-    const dateObj = new Date(date);
-    const dayKey = DAY_KEYS[dateObj.getDay()];
-    const daySettings = settings.workingHours?.get
-      ? settings.workingHours.get(dayKey)
-      : settings.workingHours?.[dayKey];
+    const employee = await Employee.findById(employeeId);
+    if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
 
-    // Якщо вихідний — повертаємо порожній масив
-    if (!daySettings || !daySettings.isOpen) {
+    // Перетин годин салону й графіка САМЕ ЦЬОГО майстра — інакше слот
+    // рекламується навіть у вихідний майстра, коли салон загалом відкритий.
+    const weekday = weekdayOf(date);
+    const window = effectiveWindow(settings, employee, weekday);
+
+    if (!window) {
       return res.json({ date, employeeId, availableSlots: [], closed: true });
     }
-
-    const fromTime = daySettings.from || '09:00';
-    const toTime   = daySettings.to   || '19:00';
-
-    const [fromH, fromM] = fromTime.split(':').map(Number);
-    const [toH,   toM]   = toTime.split(':').map(Number);
-    const fromMinutes = fromH * 60 + fromM;
-    const toMinutes   = toH   * 60 + toM;
+    const { fromMinutes, toMinutes } = window;
 
     // Записи майстра на цю дату
     const startOfDay = new Date(date);
@@ -180,6 +182,13 @@ router.post('/', async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  if (!TIME_RE.test(startTime)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_TIME_FORMAT, 'Некоректний час початку', { field: 'startTime' });
+  }
+  const dateObj = new Date(date);
+  if (!parseCalendarDate(date)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
+  }
 
   const preferredLang = lang === 'en' ? 'en' : 'uk';
 
@@ -188,23 +197,19 @@ router.post('/', async (req, res) => {
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
     if (!employee.isAvailable || employee.isActive === false) return sendError(res, 400, ERROR_CODES.EMPLOYEE_UNAVAILABLE, 'Майстер тимчасово недоступний для запису');
 
-    const services = await Service.find({ _id: { $in: serviceIds } });
+    const settings = await Settings.findOne();
+    const rangesEnabled = !!settings?.serviceRangesEnabled;
+
+    // Публічний ендпоінт — послуга, вимкнена з каталогу (isAvailable:false),
+    // не повинна бути бронювальною напряму через API, навіть якщо її ще не
+    // прибрали з полів форми на клієнті.
+    const services = await Service.find({ _id: { $in: serviceIds }, isAvailable: true });
     if (services.length !== serviceIds.length) {
       return sendError(res, 400, ERROR_CODES.INVALID_SERVICE, 'Одну або декілька обраних послуг не знайдено');
     }
     if (!canEmployeePerformServices(employee, serviceIds)) {
       return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
     }
-
-    const dateObj = new Date(date);
-    const dayKey = EMPLOYEE_DAY_KEYS[dateObj.getDay()];
-    const daySchedule = employee.schedule?.[dayKey];
-    if (!daySchedule || !daySchedule.isOpen) {
-      return sendError(res, 400, ERROR_CODES.EMPLOYEE_DAY_OFF, 'У майстра вихідний у цей день');
-    }
-
-    const settings = await Settings.findOne();
-    const rangesEnabled = !!settings?.serviceRangesEnabled;
 
     // totalDuration — сума МАКСИМАЛЬНИХ тривалостей (коли діапазони
     // увімкнені) — саме це резервується в календарі, щоб виключити
@@ -218,30 +223,24 @@ router.post('/', async (req, res) => {
     const totalPrice       = services.reduce((sum, s) => sum + s.price, 0);
     const totalPriceMax    = services.reduce((sum, s) => sum + (rangesEnabled ? (s.priceMax ?? s.price) : s.price), 0);
 
-    // Перевірка накладання з існуючими записами майстра
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const existing = await Appointment.find({
-      employee: employeeId,
-      date: { $gte: startOfDay, $lte: endOfDay },
-      status: { $nin: ['Cancelled'] },
-    });
-
+    // Перетин годин салону й графіка майстра (той самий розрахунок, що й
+    // GET /available-slots) — замість колишньої перевірки лише вихідного
+    // дня, тепер враховуємо й закриття/відкриття години.
+    const timezone = settings?.timezone || DEFAULT_TIMEZONE;
+    const weekday = weekdayOf(date);
+    const window = effectiveWindow(settings, employee, weekday);
+    if (!window) {
+      return sendError(res, 400, ERROR_CODES.EMPLOYEE_DAY_OFF, 'У майстра вихідний у цей день');
+    }
     const [startH, startM] = startTime.split(':').map(Number);
-    const newStartMin = startH * 60 + startM;
-    const newEndMin = newStartMin + totalDuration;
+    const startMinutes = startH * 60 + startM;
+    if (startMinutes < window.fromMinutes || startMinutes + totalDuration > window.toMinutes) {
+      return sendError(res, 400, ERROR_CODES.OUTSIDE_WORKING_HOURS, 'Цей час поза робочими годинами майстра', { field: 'startTime' });
+    }
 
-    const hasOverlap = existing.some(apt => {
-      const [h, m] = apt.startTime.split(':').map(Number);
-      const aptStartMin = h * 60 + m;
-      const aptEndMin = aptStartMin + (apt.totalDuration || 30);
-      return newStartMin < aptEndMin && aptStartMin < newEndMin;
-    });
-    if (hasOverlap) {
-      return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
+    const requestedInstant = toZonedInstant(date, startTime, timezone);
+    if (requestedInstant.getTime() <= Date.now()) {
+      return sendError(res, 400, ERROR_CODES.BOOKING_IN_PAST, 'Не можна забронювати час, який уже минув', { field: 'date' });
     }
 
     let client = await Client.findOne({ phone: clientPhone });
@@ -249,18 +248,32 @@ router.post('/', async (req, res) => {
       client = await Client.create({ name: clientName, phone: clientPhone, email: clientEmail || '' });
     }
 
-    const appointment = await Appointment.create({
-      client: client._id,
-      employee: employeeId,
-      services: serviceIds,
-      date: dateObj,
-      startTime,
-      totalDuration,
-      totalPrice,
-      status: 'Scheduled',
-      preferredLang,
-      source: 'public',
+    // Атомарне резервування: лок на (майстер, день) гарантує, що перевірка
+    // перекриття й створення запису відбуваються без гонки з паралельним
+    // запитом на той самий час (публічним чи адмінським — той самий лок).
+    const lockResult = await withEmployeeDayLock(req.models, employeeId, date, async () => {
+      if (await hasOverlap(req.models, { employeeId, dateObj, startTime, totalDuration })) {
+        return { conflict: true };
+      }
+      const created = await Appointment.create({
+        client: client._id,
+        employee: employeeId,
+        services: serviceIds,
+        date: dateObj,
+        startTime,
+        totalDuration,
+        totalPrice,
+        status: 'Scheduled',
+        preferredLang,
+        source: 'public',
+      });
+      return { conflict: false, appointment: created };
     });
+
+    if (lockResult.conflict) {
+      return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
+    }
+    const appointment = lockResult.appointment;
 
     // Лист і сповіщення надсилаємо без очікування (SMTP-хендшейк буває
     // повільним, і клієнт на публічній сторінці бронювання не повинен
@@ -329,6 +342,9 @@ router.post('/', async (req, res) => {
       }
     });
   } catch (err) {
+    if (err.code === 'LOCK_TIMEOUT') {
+      return sendError(res, 409, ERROR_CODES.BOOKING_BUSY, 'Забагато одночасних спроб бронювання цього часу — спробуйте ще раз');
+    }
     handleRouteError(res, err, 'booking/create');
   }
 });
