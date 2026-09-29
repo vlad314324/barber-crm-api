@@ -42,23 +42,95 @@ async function computeClientStats(Appointment, clientIds) {
   return stats;
 }
 
-// GET all clients — з підрахунком візитів
+const SORTABLE_FIELDS = ['name', 'visits', 'lastVisit', 'createdAt'];
+
+// Екранує спецсимволи regex — пошук іде через $regex за довільним
+// текстом користувача, без цього щось на кшталт "a.*b" збіглося б
+// набагато ширше, ніж очікує людина, що просто шукає ім'я з крапкою.
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// GET all clients — з підрахунком візитів.
+//
+// Два режими в одному ендпоінті, свідомо: без ?page — точно та сама
+// поведінка, що була завжди (плаский масив УСІХ клієнтів), бо на неї
+// покладаються інші сторінки, яким потрібен повний список для
+// дропдаунів/пошуку (вибір клієнта в записі, огляди майстра, дашборд,
+// перевірка "чи є взагалі клієнти" в онбордингу) — їх не чіпаємо. З
+// ?page — новий пагінований/сортований/пошуковий шлях для власне
+// списку клієнтів (Clients.tsx), де кількість клієнтів справді може
+// бути великою.
 router.get('/', async (req, res) => {
   const { Client, Appointment } = req.models;
   try {
-    const clients = await Client.find().sort({ createdAt: -1 });
-    const stats = await computeClientStats(Appointment, clients.map((c) => c._id));
+    if (req.query.page === undefined) {
+      const clients = await Client.find().sort({ createdAt: -1 });
+      const stats = await computeClientStats(Appointment, clients.map((c) => c._id));
 
-    const clientsWithStats = clients.map((client) => {
-      const s = stats.get(String(client._id));
-      return {
-        ...client.toObject(),
-        visits: s?.visits || 0,
-        lastVisit: s?.lastVisit || null,
-      };
-    });
+      const clientsWithStats = clients.map((client) => {
+        const s = stats.get(String(client._id));
+        return {
+          ...client.toObject(),
+          visits: s?.visits || 0,
+          lastVisit: s?.lastVisit || null,
+        };
+      });
 
-    res.json(clientsWithStats);
+      return res.json(clientsWithStats);
+    }
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, Number(req.query.limit) || 25), 100);
+    const search = String(req.query.search || '').trim().slice(0, 200);
+    const sortBy = SORTABLE_FIELDS.includes(req.query.sortBy) ? req.query.sortBy : 'createdAt';
+    const sortDir = req.query.sortDir === 'asc' ? 1 : -1;
+
+    const matchStage = search
+      ? {
+          $or: [
+            { name: { $regex: escapeRegex(search), $options: 'i' } },
+            { phone: { $regex: escapeRegex(search), $options: 'i' } },
+            { email: { $regex: escapeRegex(search), $options: 'i' } },
+          ],
+        }
+      : {};
+
+    // visits/lastVisit не зберігаються на клієнті — рахуємо через агрегацію
+    // (а не JS-редьюс, як в решті проєкту), бо саме тут потрібне сортування
+    // й пагінація ПО похідному полю на потенційно великій колекції.
+    const [result] = await Client.aggregate([
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: Appointment.collection.name,
+          let: { clientId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$client', '$$clientId'] }, { $eq: ['$status', 'Completed'] }] } } },
+            { $sort: { date: -1 } },
+            { $project: { date: 1 } },
+          ],
+          as: 'completedAppointments',
+        },
+      },
+      {
+        $addFields: {
+          visits: { $size: '$completedAppointments' },
+          lastVisit: { $arrayElemAt: ['$completedAppointments.date', 0] },
+        },
+      },
+      { $project: { completedAppointments: 0 } },
+      { $sort: { [sortBy]: sortDir, _id: 1 } },
+      {
+        $facet: {
+          data: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+          totalCount: [{ $count: 'count' }],
+        },
+      },
+    ]);
+
+    const total = result.totalCount[0]?.count || 0;
+    res.json({ clients: result.data, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) {
     handleRouteError(res, err, 'clients/list');
   }
