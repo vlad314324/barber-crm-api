@@ -168,6 +168,75 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /employees/:id/appointments — повна історія записів майстра (усі
+// статуси), найновіші перші — для сторінки деталей майстра. Той самий
+// патерн, що й GET /clients/:id/appointments.
+router.get('/:id/appointments', requireRole('admin'), async (req, res) => {
+  const { Appointment } = req.models;
+  try {
+    const appointments = await Appointment.find({ employee: req.params.id })
+      .populate('client')
+      .populate('services')
+      .sort({ date: -1 });
+    res.json(appointments);
+  } catch (err) {
+    handleRouteError(res, err, 'employees/appointments');
+  }
+});
+
+// GET /employees/:id/stats — місячний заробіток (останні 12 місяців) і
+// список клієнтів майстра, зібрані з виконаних (Completed) записів. Той
+// самий підхід (JS-редьюс, а не Mongo-агрегація), що й
+// GET /analytics/dashboard — обсяг записів на одного майстра невеликий.
+router.get('/:id/stats', requireRole('admin'), async (req, res) => {
+  const { Employee, Appointment } = req.models;
+  try {
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+
+    const completed = await Appointment.find({ employee: employee._id, status: 'Completed' })
+      .populate('client')
+      .sort({ date: -1 });
+
+    const now = new Date();
+    const monthlyEarnings = [];
+    for (let i = 11; i >= 0; i--) {
+      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+      const inMonth = completed.filter((a) => new Date(a.date) >= start && new Date(a.date) <= end);
+      monthlyEarnings.push({
+        month: start.toLocaleDateString('uk-UA', { month: 'short', year: '2-digit' }),
+        amount: inMonth.reduce((s, a) => s + a.totalPrice, 0),
+        appointments: inMonth.length,
+      });
+    }
+
+    const clientMap = new Map(); // clientId -> { id, name, phone, visits, lastVisit, totalSpent }
+    completed.forEach((a) => {
+      const c = a.client;
+      if (!c) return; // клієнта могли видалити — Appointment.client лишається битим посиланням, populate дає null
+      const key = String(c._id);
+      const entry = clientMap.get(key);
+      if (entry) {
+        entry.visits += 1;
+        entry.totalSpent += a.totalPrice;
+        if (new Date(a.date) > new Date(entry.lastVisit)) entry.lastVisit = a.date;
+      } else {
+        clientMap.set(key, { id: key, name: c.name, phone: c.phone, visits: 1, totalSpent: a.totalPrice, lastVisit: a.date });
+      }
+    });
+
+    res.json({
+      totalEarnings: completed.reduce((s, a) => s + a.totalPrice, 0),
+      totalCompletedAppointments: completed.length,
+      monthlyEarnings,
+      clients: [...clientMap.values()].sort((a, b) => b.visits - a.visits),
+    });
+  } catch (err) {
+    handleRouteError(res, err, 'employees/stats');
+  }
+});
+
 router.post('/', requireRole('admin'), async (req, res) => {
   const { Employee, Service } = req.models;
   const missing = firstMissingField(req.body, ['name', 'phone', 'email', 'role', 'hourlyRate']);
