@@ -40,6 +40,7 @@ This starts the server with nodemon on port `5000` (or `PORT`).
 | `FRONTEND_URL` | recommended | Base URL for password-reset links, salon invitation links, and email logo assets. |
 | `PORT` | no | HTTP port (default `5000`). |
 | `DISABLE_REMINDER_JOB` | no | Set to `true` to skip the 24h appointment reminder cron. |
+| `DISABLE_PLATFORM_ROLLUP_JOB` | no | Set to `true` to skip the nightly platform-analytics rollup cron. |
 
 Example `.env`:
 

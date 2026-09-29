@@ -9,115 +9,13 @@ const verifyPlatformAdmin = require('../middleware/verifyPlatformAdmin');
 const { sendSalonDeactivatedEmail } = require('../config/mailer');
 const { getTenantContext } = require('../config/tenantDb');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const {
+  DEFAULT_TIMEZONE, buildFunnelSummary, buildUsageSummary, summarizeAppointments, buildDailyTrend,
+} = require('../utils/analyticsAggregation');
+const SalonDailyStat = require('../models/platform/SalonDailyStat');
 
 const INVITATION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 днів
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
-
-const DEFAULT_TIMEZONE = 'Europe/Kyiv';
-// Лінійний порядок кроків воронки бронювання — submit_failed навмисно поза
-// цим списком: це паралельна "гілка" (невдала спроба), а не крок, який
-// відвідувач проходить по дорозі до submit_success.
-const FUNNEL_STEPS = ['page_view', 'master_selected', 'service_selected', 'slot_selected', 'contacts_entered', 'submit_success'];
-
-// Джерело переходу — UTM-мітка на посиланні (надійно, коли вона є, напр.
-// ?utm_source=instagram_bio з BookingLinkCard) або, як запасний варіант,
-// домен `referrer` (мобільний in-app браузер Instagram часто взагалі не
-// передає referrer, тож для таких переходів лишається лише 'direct').
-function extractReferrerHost(referrer) {
-  if (!referrer) return null;
-  try {
-    return new URL(referrer).hostname.replace(/^www\./, '');
-  } catch {
-    return null;
-  }
-}
-
-// Рахуємо в JS (як і решта аналітики в цьому файлі) — обсяг подій на один
-// салон за розумне вікно (днів/місяців) невеликий, агрегаційний пайплайн
-// тут не виправданий.
-function buildFunnelSummary(events) {
-  const sessionsByEvent = {};
-  const countByEvent = {};
-  FUNNEL_STEPS.forEach((e) => { sessionsByEvent[e] = new Set(); countByEvent[e] = 0; });
-
-  let submitFailedCount = 0;
-  const visitorIds = new Set();
-  const sourceCounts = {};
-
-  events.forEach((ev) => {
-    if (ev.event === 'submit_failed') { submitFailedCount += 1; return; }
-    if (!FUNNEL_STEPS.includes(ev.event)) return;
-
-    countByEvent[ev.event] += 1;
-    if (ev.sessionId) sessionsByEvent[ev.event].add(ev.sessionId);
-
-    if (ev.event === 'page_view') {
-      if (ev.visitorId) visitorIds.add(ev.visitorId);
-      const source = ev.utmSource || extractReferrerHost(ev.referrer) || 'direct';
-      sourceCounts[source] = (sourceCounts[source] || 0) + 1;
-    }
-  });
-
-  const funnel = FUNNEL_STEPS.map((event) => ({
-    event,
-    count: countByEvent[event],
-    uniqueSessions: sessionsByEvent[event].size,
-  }));
-
-  const sourceBreakdown = Object.entries(sourceCounts)
-    .map(([source, count]) => ({ source, count }))
-    .sort((a, b) => b.count - a.count);
-
-  return { funnel, submitFailedCount, uniqueVisitors: visitorIds.size, sourceBreakdown };
-}
-
-// Активні дні/година доби — у ЧАСОВОМУ ПОЯСІ САЛОНУ (не сервера), інакше
-// "коли користуються кабінетом" було б спотворене зсувом поясів.
-function buildUsageSummary(sessions, timezone) {
-  const activeDays = new Set();
-  const hourHistogram = new Array(24).fill(0);
-  let totalActiveMs = 0;
-
-  const hourFormatter = new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: '2-digit', hourCycle: 'h23' });
-  const dayFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
-
-  sessions.forEach((s) => {
-    activeDays.add(dayFormatter.format(s.loginAt));
-    hourHistogram[Number(hourFormatter.format(s.loginAt))] += 1;
-    const lastActive = s.lastActiveAt || s.loginAt;
-    totalActiveMs += Math.max(0, lastActive.getTime() - s.loginAt.getTime());
-  });
-
-  const totalActiveMinutes = Math.round(totalActiveMs / 60000);
-  return {
-    loginCount: sessions.length,
-    activeDaysCount: activeDays.size,
-    totalActiveMinutes,
-    avgSessionMinutes: sessions.length > 0 ? Math.round(totalActiveMinutes / sessions.length) : 0,
-    hourHistogram,
-  };
-}
-
-// Будує масив останніх `days` календарних днів (включно з сьогодні) з
-// лічильниками візитів/бронювань по кожному дню — для тренд-графіка.
-// Рахуємо в JS замість Mongo-агрегації: дані невеликі, а так простіше й
-// узгоджується зі стилем решти проєкту (без агрегаційних пайплайнів там,
-// де без них цілком можна обійтись).
-function buildDailyTrend(visits, bookings, days) {
-  const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
-  const visitCounts = {};
-  visits.forEach((v) => { const k = dayKey(v.createdAt); visitCounts[k] = (visitCounts[k] || 0) + 1; });
-  const bookingCounts = {};
-  bookings.forEach((b) => { const k = dayKey(b.createdAt); bookingCounts[k] = (bookingCounts[k] || 0) + 1; });
-
-  const trend = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
-    const key = dayKey(d);
-    trend.push({ date: key, visits: visitCounts[key] || 0, bookings: bookingCounts[key] || 0 });
-  }
-  return trend;
-}
 
 const signPlatformToken = (admin) =>
   jwt.sign({ id: admin._id }, process.env.PLATFORM_JWT_SECRET, { expiresIn: '7d' });
@@ -273,18 +171,102 @@ router.get('/salons/:id/analytics/usage', verifyPlatformAdmin, async (req, res) 
     ]);
     const timezone = settings?.timezone || DEFAULT_TIMEZONE;
     const usage = buildUsageSummary(sessions, timezone);
+    const { bookingsBySource, bookingsByStatus, totalBookings } = summarizeAppointments(appointments);
 
-    const bookingsBySource = { public: 0, admin: 0 };
-    const bookingsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0 };
-    appointments.forEach((a) => {
-      if (a.source === 'public') bookingsBySource.public += 1;
-      else bookingsBySource.admin += 1;
-      if (bookingsByStatus[a.status] !== undefined) bookingsByStatus[a.status] += 1;
-    });
-
-    res.json({ days, ...usage, totalBookings: appointments.length, bookingsBySource, bookingsByStatus });
+    res.json({ days, ...usage, totalBookings, bookingsBySource, bookingsByStatus });
   } catch (err) {
     handleRouteError(res, err, 'platform/salons-usage-analytics');
+  }
+});
+
+// GET /api/platform/analytics/overview — крос-акаунтна зведена аналітика.
+// На відміну від /salons/:id/analytics/* (які заходять у tenant-БД
+// салону наживо), тут ЖОДНОГО живого циклу по всіх tenant-БД — читаємо
+// лише вже підготовлені нічною rollup-джобою (config/platformRollupJob.js)
+// підсумки з SalonDailyStat у платформній БД, тож ендпоінт лишається
+// швидким незалежно від кількості салонів на платформі.
+router.get('/analytics/overview', verifyPlatformAdmin, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const recentSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+
+    const [salons, stats] = await Promise.all([
+      Salon.find({ isActive: true }).select('name slug'),
+      SalonDailyStat.find({ date: { $gte: since } }).sort({ date: 1 }),
+    ]);
+
+    const rowsBySalon = {};
+    stats.forEach((s) => {
+      const key = s.salon.toString();
+      (rowsBySalon[key] ||= []).push(s);
+    });
+
+    const platformTotals = { totalVisits: 0, totalBookings: 0, crmLogins: 0 };
+
+    const salonSummaries = salons.map((salon) => {
+      const rows = rowsBySalon[salon._id.toString()] || [];
+      const totalVisits = rows.reduce((sum, r) => sum + r.totalVisits, 0);
+      const totalBookings = rows.reduce((sum, r) => sum + r.bookingsPublic + r.bookingsAdmin, 0);
+      const crmLogins = rows.reduce((sum, r) => sum + r.crmLogins, 0);
+      const cancelledOrNoShow = rows.reduce((sum, r) => sum + (r.bookingsByStatus.Cancelled || 0) + (r.bookingsByStatus['No-show'] || 0), 0);
+
+      platformTotals.totalVisits += totalVisits;
+      platformTotals.totalBookings += totalBookings;
+      platformTotals.crmLogins += crmLogins;
+
+      // Health score (0-100) — зважена комбінація трьох сигналів:
+      //  - 40%: тренд бронювань (друга половина вікна проти першої — росте
+      //    чи падає активність салону);
+      //  - 30%: свіжість останньої активності (бронювання АБО логін у
+      //    кабінет) — чим давніше, тим нижчий бал, 0 після 10+ днів тиші;
+      //  - 30%: частка скасувань/неявок серед бронювань (інверсно — менше
+      //    відмов, вищий бал).
+      // Не наукова метрика, а сортувальний орієнтир "на що глянути першим".
+      const half = Math.floor(rows.length / 2);
+      const earlyBookings = rows.slice(0, half).reduce((s, r) => s + r.bookingsPublic + r.bookingsAdmin, 0);
+      const recentBookings = rows.slice(half).reduce((s, r) => s + r.bookingsPublic + r.bookingsAdmin, 0);
+      const trendScore = earlyBookings === 0
+        ? (recentBookings > 0 ? 100 : 50) // немає з чим порівняти — нейтрально, якщо й зараз тихо
+        : Math.min(100, Math.round((recentBookings / earlyBookings) * 100));
+
+      const lastActiveRow = [...rows].reverse().find((r) => r.bookingsPublic + r.bookingsAdmin + r.crmLogins > 0);
+      const daysSinceActive = lastActiveRow ? Math.floor((Date.now() - lastActiveRow.date.getTime()) / (24 * 60 * 60 * 1000)) : null;
+      const recencyScore = daysSinceActive === null ? 0 : Math.max(0, 100 - daysSinceActive * 10);
+
+      const cancellationRate = totalBookings > 0 ? cancelledOrNoShow / totalBookings : 0;
+      const cancellationScore = Math.max(0, 100 - Math.round(cancellationRate * 100));
+
+      const healthScore = rows.length === 0 ? null : Math.round(trendScore * 0.4 + recencyScore * 0.3 + cancellationScore * 0.3);
+
+      // Churn-risk: салон, що колись мав активність (бронювання чи логін)
+      // у вибраному вікні, але за останні 14 днів — жодної. Свіжий салон
+      // без жодної активності ще (нема з чим порівняти) НЕ позначається —
+      // це "ще не активувався", а не "відтік".
+      const everActive = rows.some((r) => r.bookingsPublic + r.bookingsAdmin + r.crmLogins > 0);
+      const recentActivity = rows
+        .filter((r) => r.date >= recentSince)
+        .reduce((sum, r) => sum + r.bookingsPublic + r.bookingsAdmin + r.crmLogins, 0);
+      const churnRisk = everActive && recentActivity === 0;
+
+      return {
+        id: salon._id,
+        name: salon.name,
+        slug: salon.slug,
+        totalVisits,
+        totalBookings,
+        crmLogins,
+        cancellationRate,
+        healthScore,
+        churnRisk,
+      };
+    });
+
+    salonSummaries.sort((a, b) => (a.healthScore ?? -1) - (b.healthScore ?? -1));
+
+    res.json({ days, platformTotals, salons: salonSummaries });
+  } catch (err) {
+    handleRouteError(res, err, 'platform/analytics-overview');
   }
 });
 
