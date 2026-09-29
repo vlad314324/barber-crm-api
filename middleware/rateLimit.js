@@ -20,5 +20,12 @@ const salonRegisterLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, ...
 // часу тощо) — до кількох подій на одне відвідування, значно частіше за
 // саме бронювання, тож окремий, помітно щедріший ліміт.
 const analyticsEventLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 60, ...baseOptions });
+// Платформний адмін-логін і створення адмін-акаунтів (bootstrap-секрет або
+// запрошення) — той самий клас ризику, що й звичайний логін/реєстрація.
+const platformLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, ...baseOptions });
+const platformAdminCreateLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, ...baseOptions });
 
-module.exports = { loginLimiter, forgotPasswordLimiter, resetPasswordLimiter, publicBookingLimiter, salonRegisterLimiter, analyticsEventLimiter };
+module.exports = {
+  loginLimiter, forgotPasswordLimiter, resetPasswordLimiter, publicBookingLimiter, salonRegisterLimiter,
+  analyticsEventLimiter, platformLoginLimiter, platformAdminCreateLimiter,
+};

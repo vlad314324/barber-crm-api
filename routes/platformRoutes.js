@@ -10,6 +10,7 @@ const { sendSalonDeactivatedEmail } = require('../config/mailer');
 const { getTenantContext } = require('../config/tenantDb');
 const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { validatePassword } = require('../utils/password');
+const { platformLoginLimiter, platformAdminCreateLimiter } = require('../middleware/rateLimit');
 const {
   DEFAULT_TIMEZONE, buildFunnelSummary, buildUsageSummary, summarizeAppointments, buildDailyTrend,
   buildNorthStarSeries, buildActivationMetrics, buildRetentionCohorts, buildChurnRate,
@@ -23,7 +24,7 @@ const signPlatformToken = (admin) =>
   jwt.sign({ id: admin._id }, process.env.PLATFORM_JWT_SECRET, { expiresIn: '7d' });
 
 // POST /api/platform/auth/login
-router.post('/auth/login', async (req, res) => {
+router.post('/auth/login', platformLoginLimiter, async (req, res) => {
   const { email, password } = req.body;
   const missing = firstMissingField(req.body, ['email', 'password']);
   if (missing) {
@@ -52,7 +53,7 @@ router.post('/auth/login', async (req, res) => {
 
 // POST /api/platform/admins — bootstrap (секретом, лише поки акаунтів 0)
 // або створення колеги (потрібен дійсний платформний токен)
-router.post('/admins', async (req, res) => {
+router.post('/admins', platformAdminCreateLimiter, async (req, res) => {
   const { name, email, password } = req.body;
   const missing = firstMissingField(req.body, ['name', 'email', 'password']);
   if (missing) {

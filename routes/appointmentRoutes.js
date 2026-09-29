@@ -296,6 +296,13 @@ router.put('/:id', async (req, res) => {
     const touchesSchedule = ['date', 'startTime', 'employee', 'totalDuration'].some((f) => req.body[f] !== undefined);
     const effectiveStatus = req.body.status !== undefined ? req.body.status : existing.status;
 
+    // Перенесення запису на іншу дату/час зсуває 24-годинне вікно
+    // нагадування — якщо для старого часу нагадування вже надіслано,
+    // скинути прапорець, інакше на новий час воно вже не прийде.
+    if ((req.body.date !== undefined || req.body.startTime !== undefined) && existing.reminderSent) {
+      req.body.reminderSent = false;
+    }
+
     let updated;
     if (touchesSchedule && effectiveStatus !== 'Cancelled') {
       const effectiveEmployeeId = req.body.employee ?? existing.employee;

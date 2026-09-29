@@ -85,9 +85,9 @@ async function runReminderTick(salonsOverride) {
             lang: apt.preferredLang,
             shopName: settings?.shopName,
           });
-          console.log(`[${salon.slug}] Reminder sent to ${client.email}`);
+          console.log(`[${salon.slug}] Reminder sent for appointment ${apt._id}`);
         } catch (err) {
-          console.error(`[${salon.slug}] Failed to send reminder to ${client.email}:`, err.message);
+          console.error(`[${salon.slug}] Failed to send reminder for appointment ${apt._id}:`, err.message);
           // Провал доставки не повинен назавжди "з'їдати" нагадування —
           // повертаємо reminderSent у false, щоб наступний тік спробував ще раз.
           await models.Appointment.updateOne({ _id: apt._id }, { $set: { reminderSent: false } }).catch(() => {});

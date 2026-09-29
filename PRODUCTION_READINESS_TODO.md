@@ -96,7 +96,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** Create past/future appointments and reviews, delete/archive each referenced entity, and verify API responses, history, future booking eligibility, and login behavior.
 - **Depends on:** BE-02 for revocation. **Coordinate:** FE-04. **Evidence:** Pending.
 
-### [ ] BE-08 — Establish public endpoint abuse protection
+### [x] BE-08 — Establish public endpoint abuse protection
 
 - **Priority:** P0 unless equivalent deployed controls are demonstrated. **Review:** F08, probable deployment risk. **Effort:** M.
 - **Inspect:** Public login, password recovery, platform login/bootstrap, salon registration, and booking routes; proxy/deployment configuration when available.
@@ -104,7 +104,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** First inspect existing gateway controls. Close gaps with per-account, per-origin, and per-tenant policies appropriate to each endpoint, distributed across replicas. Bound booking/email abuse without exposing account existence. Configure client-address trust for the actual proxy topology.
 - **Acceptance:** Repeated abuse is limited with consistent responses; limits cannot be bypassed simply by switching replicas or spoofing untrusted forwarding headers; ordinary shared-network users can still complete workflows.
 - **Verify:** Staging requests through the actual proxy, including limits, recovery windows, multiple replicas, and generic password-recovery responses.
-- **Coordinate:** FE-05 handling of rate-limit errors. **Evidence:** Pending; upstream controls unverified.
+- **Coordinate:** FE-05 handling of rate-limit errors. **Evidence:** Done — `express-rate-limit` (`middleware/rateLimit.js`) was already wired on tenant login/forgot-password/reset-password (`routes/authRoutes.js`), public booking and analytics-event ingestion (`routes/bookingRoutes.js`), and salon self-registration (`routes/salonRoutes.js`). This session closed the remaining gap: added `platformLoginLimiter` (`POST /api/platform/auth/login`) and `platformAdminCreateLimiter` (`POST /api/platform/admins`) — the two platform-admin routes had no limiter at all. `app.js:16` already sets `app.set('trust proxy', 1)`, matching Render's single reverse-proxy hop, so `req.ip`-keyed limits can't be bypassed by spoofing forwarding headers from outside that hop. Render is a single instance (no autoscaling/replicas), so the in-memory store — documented in `middleware/rateLimit.js`'s header comment — doesn't need a shared store; re-evaluate if the deployment topology changes. Deep proxy/replica staging verification remains unexercised (no staging environment exists), consistent with this doc's general no-staging caveat.
 
 ### [ ] BE-09 — Make notification delivery durable and worker-safe
 
@@ -114,7 +114,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Add a durable outbox with atomic claims, bounded timeouts/retries/backoff, and observable failure state. Define provider idempotency and crash recovery so delivery guarantees are accurate. Reevaluate reminders when appointments are rescheduled/cancelled. Until implemented, document and enforce a single reminder owner during deployments.
 - **Acceptance:** Booking commits do not depend on email availability; committed notification work survives restarts; overlapping workers do not normally deliver duplicate reminders; permanent failures become actionable.
 - **Verify:** Provider timeout/429/5xx, worker crash before/after send, two workers, cancellation/rescheduling, and recovery tests. Record unavoidable provider-side duplicate windows instead of claiming exactly-once delivery without evidence.
-- **Depends on:** BE-04 notification event/idempotency contract. **Evidence:** Pending.
+- **Depends on:** BE-04 notification event/idempotency contract. **Evidence:** Partial. The reminder cron already claims atomically before sending (`config/reminderJob.js:70-73`, `findOneAndUpdate({reminderSent:{$ne:true}})`), so overlapping ticks/instances can't double-send — this part of the acceptance criteria was already met. This session fixed a related bug: `Appointment.reminderSent` wasn't reset when a scheduled appointment's `date`/`startTime` changed (`routes/appointmentRoutes.js` PUT `/:id`), so a rescheduled appointment that already had a reminder sent for its old slot silently never got one for the new slot — now reset to `false` on reschedule when it was previously `true`. Still open: booking-confirmation email remains fire-and-forget with no durable outbox/retry (`routes/bookingRoutes.js`, intentional per `CLAUDE.md`'s "email failures are caught and logged, not thrown" note, but that means a crash between commit and send still loses the confirmation silently); no explicit provider-timeout/backoff policy beyond `config/mailer.js`'s 10s timeout. Full outbox implementation not attempted this session — out of scope for the phase that covered this item.
 
 ### [x] BE-10 — Normalize authenticated-user and password-change contracts
 
@@ -190,7 +190,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Document the actual data inventory and processors, define approved retention/deletion behavior with the product owner, and implement scheduled cleanup where required. Reconcile deletion with historical appointments and backup retention. Redact unnecessary personal data and credentials from logs.
 - **Acceptance:** Retention and deletion rules are explicit and testable; deletion does not silently destroy required history or leave unaccounted copies; logs and email failure messages follow the documented data policy.
 - **Verify:** Synthetic retention/deletion fixtures and sanitized log review. Link approved policy and processor configuration evidence; do not infer legal compliance from code inspection.
-- **Depends on:** BE-07, BE-13. **Coordinate:** FE-10. **Evidence:** Pending.
+- **Depends on:** BE-07, BE-13. **Coordinate:** FE-10. **Evidence:** Partial. Added `DATA_RETENTION.md` (data inventory, processors — MongoDB Atlas, Brevo — and proposed default retention windows), explicitly marked as a draft pending product-owner approval, not enforced. Fixed the one concrete log-redaction gap found: `config/reminderJob.js` logged the client's email address in cleartext on both success and failure (`:88,90`); now logs the appointment id instead. No scheduled deletion/anonymization job was implemented — retention windows require an explicit owner decision first (see the doc), and actual data deletion also depends on `BE-07`'s referenced-record handling and `BE-13`'s backup-retention verification, neither of which is a decision this session can make unilaterally.
 
 ## Original verification baseline
 
