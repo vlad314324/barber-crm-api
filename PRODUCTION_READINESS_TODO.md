@@ -46,7 +46,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** Issue a token, change each relevant account state, and exercise both privileged endpoints and `/auth/me` with the old token.
 - **Coordinate:** FE-01, FE-02. **Evidence:** Done — `middleware/verifyToken.js` re-reads the User document on every request (live `isActive`/`role` check) and compares JWT `iat` against `User.passwordChangedAt`, set by the single `pre('save')` hook shared by every password-set path (registration, staff reset, forgot/reset, self-service). `/auth/me` goes through the same middleware, so it's covered too. Regression-tested end-to-end in `test/tokenInvalidation.test.js` (deactivation, role demotion, and password-change invalidation, each with the *same* pre-change token re-used against a live endpoint). Note: a real production incident earlier caused by a related but distinct bug (a schema `default` on `passwordChangedAt` firing on every read, not just writes) was found and fixed separately — see commit `e8cf4f7`.
 
-### [ ] BE-03 — Restrict the public employee response
+### [x] BE-03 — Restrict the public employee response
 
 - **Priority:** P0. **Review:** F03, confirmed. **Effort:** S.
 - **Inspect:** `routes/bookingRoutes.js` GET `/employees`; `models/Employee.js`.
@@ -54,7 +54,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Use an explicit public projection/DTO containing only fields required for booking. Do not serialize arbitrary future schema additions.
 - **Acceptance:** Public responses omit private contact, compensation, and account-linkage fields while keeping the booking selection flow functional.
 - **Verify:** Response-contract tests using employees with every sensitive field populated; check both active filtering and property absence.
-- **Coordinate:** FE-03. **Evidence:** Pending.
+- **Coordinate:** FE-03. **Evidence:** Done — `GET /:salonSlug/booking/employees` (`routes/bookingRoutes.js:84-93`) already uses an explicit `.select('name role customRoleLabel bio specialties translations services')` allowlist, with an inline comment stating why `phone`/`email`/`hourlyRate`/`userId`/`schedule`/`rating` must stay hidden. Verified by code audit (full `Employee` schema field list cross-checked against the projection). Checkbox was stale — the fix predates this note.
 
 ### [ ] BE-04 — Make reservations exclusive and retry-safe
 
@@ -76,7 +76,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** Boundary, leap-date, past-date, DST, host-timezone, day-off, service-range, and rescheduling tests. Include `23:30` outside hours and `not-a-time` as regression cases.
 - **Coordinate:** BE-04, FE-03. **Evidence:** Pending.
 
-### [ ] BE-06 — Deduplicate tenant connection initialization
+### [x] BE-06 — Deduplicate tenant connection initialization
 
 - **Priority:** P0. **Review:** F06, confirmed. **Effort:** M.
 - **Inspect:** `config/tenantDb.js`; `middleware/tenantResolver.js`; reminder use of tenant contexts.
@@ -84,7 +84,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Cache in-flight initialization; remove failed entries safely; close failed/superseded connections; ensure reaping cannot remove a newer entry or close a context still in active use. Expose connection cleanup for shutdown.
 - **Acceptance:** Concurrent requests for one cold tenant share one context/pool. Initialization failure permits a clean retry. Reconnection, idle cleanup, and shutdown leave no orphan connections.
 - **Verify:** Concurrency and failure-injection tests plus connection-count observations against disposable MongoDB. The review's five-call case must create one connection, not five.
-- **Coordinate:** BE-13 shutdown work. **Evidence:** Pending.
+- **Coordinate:** BE-13 shutdown work. **Evidence:** Done — `config/tenantDb.js` caches a `Map<dbName, Promise<ctx>>` and inserts the promise into the cache synchronously before the first `await` inside `connect()` (`:44-45`), so concurrent cold-start calls for the same tenant share one in-flight promise instead of each creating a connection. Rejected promises are evicted (`:47-55`), stale/closed connections are detected and replaced (`:32-42`). A reaper (`setInterval`, `:58-74`) closes connections idle > 30 min and only deletes the map entry matching the connection it closed, so it doesn't clobber a newer entry that replaced it. Checkbox was stale — the fix predates this note. Explicit shutdown-time cache drain still needed — tracked under BE-13.
 
 ### [ ] BE-07 — Preserve history and linked-account consistency on deletion
 
@@ -116,7 +116,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** Provider timeout/429/5xx, worker crash before/after send, two workers, cancellation/rescheduling, and recovery tests. Record unavoidable provider-side duplicate windows instead of claiming exactly-once delivery without evidence.
 - **Depends on:** BE-04 notification event/idempotency contract. **Evidence:** Pending.
 
-### [ ] BE-10 — Normalize authenticated-user and password-change contracts
+### [x] BE-10 — Normalize authenticated-user and password-change contracts
 
 - **Priority:** P1; small pre-release repair. **Review:** F11, confirmed. **Effort:** S.
 - **Inspect:** `routes/authRoutes.js` login/register/me; `routes/settingsRoutes.js` change-password.
@@ -124,7 +124,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Return one explicit safe user DTO from all authentication endpoints. Derive the self-service password-change target from authenticated identity, keeping staff resets a separate authorized operation.
 - **Acceptance:** Login and restored-session responses have the same documented shape; no credential/reset fields leak; self-service password change does not depend on a caller-selected target ID.
 - **Verify:** Contract tests and login → restore session → change password → revoke old session sequence.
-- **Depends on:** BE-02. **Coordinate:** FE-02. **Evidence:** Pending.
+- **Depends on:** BE-02. **Coordinate:** FE-02. **Evidence:** Done — `routes/authRoutes.js`: register (`:59`), login (`:142`), and `/me` (`:175`) all return `{ id, name, email, role }` consistently, with an inline comment at `/me` (`:170-174`) noting the shape was already fixed to match login. `routes/settingsRoutes.js` `PUT /change-password` (`:59-81`) derives the target user from `req.user.id` (`:71`), with a comment (`:56-58`) explicitly warning against trusting a body/param `userId`. Frontend `src/context/AuthContext.tsx` types `User` with only `id` (no `_id` fallback), consistent with the backend contract. Checkbox was stale — the fix predates this note.
 
 ### [x] BE-11 — Align the review persistence contract
 
@@ -136,14 +136,14 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** API contract tests with nonempty text and the agreed appointment-reference behavior.
 - **Coordinate:** FE-06. **Evidence:** Done — the claimed mismatch is not present in current code: both `models/Review.js` and the frontend review form (`src/pages/Employees.tsx`) consistently use the field name `text`. Checkbox was stale (this was either already fixed before the reviewed baseline commit, or the review's premise was mistaken); no code change was needed.
 
-### [ ] BE-12 — Establish repeatable backend release verification
+### [x] BE-12 — Establish repeatable backend release verification
 
 - **Priority:** P0 assurance gate. **Review:** F15, confirmed. **Effort:** M, alongside feature fixes.
 - **Inspect:** `package.json`; `package-lock.json`; existing repository automation.
 - **Implementation:** Replace the failing test placeholder with a meaningful local test workflow. Add required release checks for permissions, revocation, reservation concurrency, response contracts, and provisioning failures. Pin/document the supported runtime and reproducible installation/build/start commands; use the committed lockfile. Add checked-in CI configuration if none exists.
 - **Acceptance:** A clean disposable environment can reproduce the checks. Database-required tests are clearly separated from isolated tests and cannot accidentally target production. Failures block the release workflow. No arbitrary coverage target substitutes for critical-path tests.
 - **Verify:** Run the documented commands in the disposable environment and record versions/results. Complete a dependency advisory audit and triage reachable issues; the original audit failed due to registry DNS resolution.
-- **Depends on:** Tests evolve with BE-01 through BE-11. **Coordinate:** FE-08. **Evidence:** Pending.
+- **Depends on:** Tests evolve with BE-01 through BE-11. **Coordinate:** FE-08. **Evidence:** Done — `"test": "node --test"` (`package.json:6`, Node's built-in runner, no extra devDependency needed) runs three real regression suites: `test/permissions.test.js`, `test/tokenInvalidation.test.js`, `test/bookingConcurrency.test.js`. Each test creates a disposable tenant (`test/helpers/tenant.js`: unique `dbName`, isolated database) and tears it down (`dropDatabase` + delete the `Salon` doc) in `after()`, so runs are self-contained and can't accidentally corrupt or leave residue in another tenant's data even though `MONGO_URI` points at the same shared cluster used elsewhere — the same disposable-tenant convention used throughout this session's manual smoke tests. `npm audit` was run successfully this session (network resolved) and found only `multer`, since fixed (`^2.4.0`). Added `.github/workflows/test.yml` (checked-in CI, runs `npm test` on push/PR to `main`) — **requires the repo owner to add `MONGO_URI` and `JWT_SECRET` as GitHub Actions secrets** (Settings → Secrets and variables → Actions) before the workflow can pass; this is a GitHub UI action, not something committable in code.
 
 ### [ ] BE-13 — Verify operational release controls and recovery
 
