@@ -81,8 +81,9 @@ async function runPlatformRollupTick(targetDate, salonsOverride) {
 const startPlatformRollupJob = () => {
   // Раз на добу о 03:00 — вчорашній день на цей момент уже повністю
   // завершився для будь-якого розумного часового поясу салону.
-  cron.schedule('0 3 * * *', () => runPlatformRollupTick());
+  const task = cron.schedule('0 3 * * *', () => runPlatformRollupTick());
   console.log('Platform rollup job scheduled (daily at 03:00, aggregates the previous day per salon)');
+  return task; // .stop() на graceful shutdown (server.js)
 };
 
 module.exports = { startPlatformRollupJob, runPlatformRollupTick };

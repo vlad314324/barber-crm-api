@@ -4,10 +4,26 @@
 // імпортує цей файл і додає запуск.
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const tenantResolver = require('./middleware/tenantResolver');
 const verifyToken = require('./middleware/verifyToken');
 
 const app = express();
+
+// Liveness — просто "процес відповідає на HTTP", без перевірки залежностей
+// (якщо процес завис/задедлокчений, він і на це не відповість — саме це
+// й перевіряє liveness-проба).
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// Readiness — чи готовий приймати реальний трафік: платформна БД (єдина,
+// до якої додаток тримає з'єднання завжди; tenant-БД піднімаються ліниво
+// по запиту, тож їх сюди не включаємо) має бути підключена.
+app.get('/ready', (req, res) => {
+  if (mongoose.connection.readyState === 1) {
+    return res.json({ status: 'ready' });
+  }
+  res.status(503).json({ status: 'not_ready' });
+});
 
 // Render стоїть за одним reverse-proxy hop — без цього express-rate-limit
 // або бачить IP самого proxy для всіх запитів (ліміт стає спільним на

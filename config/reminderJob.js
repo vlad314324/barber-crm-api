@@ -103,8 +103,9 @@ const startReminderJob = () => {
   // Тік кожні 15 хв: ловимо записи, які щойно потрапили у вікно "рівно
   // 24 години до початку" (з точністю ±15 хв), і шлемо нагадування лише
   // раз на запис (прапорець reminderSent).
-  cron.schedule('*/15 * * * *', runReminderTick);
+  const task = cron.schedule('*/15 * * * *', runReminderTick);
   console.log('Reminder job scheduled (checks every 15 min, sends 24h before each appointment)');
+  return task; // .stop() на graceful shutdown (server.js)
 };
 
 module.exports = { startReminderJob, runReminderTick };

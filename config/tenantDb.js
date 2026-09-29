@@ -73,4 +73,21 @@ const reaper = setInterval(async () => {
 }, REAPER_INTERVAL_MS);
 reaper.unref();
 
-module.exports = { getTenantContext };
+// Для graceful shutdown (server.js) — закриває кожну закешовану
+// tenant-конекшн і зупиняє reaper, щоб процес не тримав відкритими
+// з'єднання (чи інтервал), яких shutdown уже не очікує.
+async function closeAllTenantConnections() {
+  clearInterval(reaper);
+  const entries = [...cache.entries()];
+  cache.clear();
+  await Promise.all(entries.map(async ([, promise]) => {
+    try {
+      const ctx = await promise;
+      await ctx.connection.close();
+    } catch {
+      // з'єднання й так не піднялось чи вже закрите — нічого закривати
+    }
+  }));
+}
+
+module.exports = { getTenantContext, closeAllTenantConnections };

@@ -11,4 +11,10 @@ const connectDB = async () => {
   }
 };
 
+// Для graceful shutdown (server.js) — закриває платформне з'єднання, яке
+// відкрив connectDB() вище. Властивість на самій функції, а не окремий
+// named export, щоб існуючі `const connectDB = require('./config/db')`
+// (server.js, seed.js) лишились робочими без змін.
+connectDB.close = () => mongoose.connection.close();
+
 module.exports = connectDB;
