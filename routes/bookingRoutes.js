@@ -1,7 +1,7 @@
 const express = require('express');
 const { sendBookingConfirmation, sendEmployeeBookingNotification } = require('../config/mailer');
 const router = express.Router();
-const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { hasOverlap } = require('../utils/appointmentOverlap');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
@@ -99,6 +99,12 @@ router.get('/available-slots', async (req, res) => {
   const missing = firstMissingField(req.query, ['employeeId', 'date']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+  // Query-парсер Express підтримує bracket-нотацію (?employeeId[$ne]=x ->
+  // об'єкт замість рядка) — без цієї перевірки такий запит міг би пройти в
+  // Employee.findById як query-оператор замість точного _id.
+  if (typeof employeeId !== 'string') {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Поле "employeeId" має бути рядком', { field: 'employeeId' });
   }
   if (!parseCalendarDate(date)) {
     return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
@@ -198,6 +204,13 @@ router.post('/', publicBookingLimiter, async (req, res) => {
   const missing = firstMissingField(req.body, ['employeeId', 'serviceIds', 'date', 'startTime', 'clientName', 'clientPhone']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+  // Публічний, неавтентифікований роут — clientPhone/clientEmail далі йдуть
+  // напряму в Client.findOne(...), тож JSON-об'єкт замість рядка (напр.
+  // {"$gt": ""}) міг би пройти як query-оператор замість точного значення.
+  const nonString = firstNonStringField(req.body, ['employeeId', 'date', 'startTime', 'clientName', 'clientPhone', 'clientEmail']);
+  if (nonString) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Поле "${nonString}" має бути рядком`, { field: nonString });
   }
   if (!TIME_RE.test(startTime)) {
     return sendError(res, 400, ERROR_CODES.INVALID_TIME_FORMAT, 'Некоректний час початку', { field: 'startTime' });

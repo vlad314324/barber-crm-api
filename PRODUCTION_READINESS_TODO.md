@@ -26,7 +26,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 
 ## Tasks
 
-### [ ] BE-01 — Enforce operation-level authorization
+### [x] BE-01 — Enforce operation-level authorization
 
 - **Priority:** P0. **Review:** F01, confirmed. **Effort:** M.
 - **Inspect:** `server.js`; `middleware/verifyToken.js`; every router under `routes/`; frontend `src/App.tsx` and `src/pages/Appointments.tsx`.
@@ -34,9 +34,9 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Define a documented operation/role matrix; enforce it on the server; allowlist writable fields, including protecting employee account linkage. Provide minimal lookup responses for permitted barber workflows. Retain tenant checks. Do not invent an own-appointments-only policy without a product requirement.
 - **Acceptance:** Unauthenticated callers cannot reach protected resources; barbers cannot perform administrator operations or access administrator-only fields; administrators retain intended access; the barber calendar still works. All CRUD, import/export, settings, and account lifecycle paths are covered.
 - **Verify:** Database-backed role matrix tests and negative tests for direct HTTP requests, sensitive field updates, and cross-tenant tokens.
-- **Coordinate:** FE-01. **Evidence:** Pending.
+- **Coordinate:** FE-01. **Evidence:** Done — `requireRole('admin')` gates every export/import/create/update/delete route (`clientRoutes.js`, `employeeRoutes.js`, `appointmentRoutes.js`, `serviceRoutes.js`, plus whole-router gates on `analyticsRoutes.js`/`categoryRoutes.js`/`reviewRoutes.js`/`settingsRoutes.js` PUT). Verified by code audit (grep of every `requireRole` usage across `routes/`) plus the existing regression suite (`test/permissions.test.js`: barber token → 403 on employee/client export and other admin-only routes). Checkbox in this doc was stale — the fix predates this note.
 
-### [ ] BE-02 — Invalidate access after account and credential changes
+### [x] BE-02 — Invalidate access after account and credential changes
 
 - **Priority:** P0. **Review:** F02, confirmed. **Effort:** M.
 - **Inspect:** `middleware/verifyToken.js`; `models/User.js`; `routes/authRoutes.js`; `routes/employeeRoutes.js`; `routes/settingsRoutes.js`.
@@ -44,7 +44,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Resolve current active status and permissions during authorization; introduce a session/token-version mechanism for revocation. Apply it consistently to deactivation, role change, staff password reset, forgotten-password reset, and self-service password change. Specify how older tokens are handled during rollout.
 - **Acceptance:** Every previously issued session loses the relevant access immediately after those events, on every replica. Inactive accounts cannot validate through `/auth/me`. A new login with valid current credentials works as intended.
 - **Verify:** Issue a token, change each relevant account state, and exercise both privileged endpoints and `/auth/me` with the old token.
-- **Coordinate:** FE-01, FE-02. **Evidence:** Pending.
+- **Coordinate:** FE-01, FE-02. **Evidence:** Done — `middleware/verifyToken.js` re-reads the User document on every request (live `isActive`/`role` check) and compares JWT `iat` against `User.passwordChangedAt`, set by the single `pre('save')` hook shared by every password-set path (registration, staff reset, forgot/reset, self-service). `/auth/me` goes through the same middleware, so it's covered too. Regression-tested end-to-end in `test/tokenInvalidation.test.js` (deactivation, role demotion, and password-change invalidation, each with the *same* pre-change token re-used against a live endpoint). Note: a real production incident earlier caused by a related but distinct bug (a schema `default` on `passwordChangedAt` firing on every read, not just writes) was found and fixed separately — see commit `e8cf4f7`.
 
 ### [ ] BE-03 — Restrict the public employee response
 
@@ -126,7 +126,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** Contract tests and login → restore session → change password → revoke old session sequence.
 - **Depends on:** BE-02. **Coordinate:** FE-02. **Evidence:** Pending.
 
-### [ ] BE-11 — Align the review persistence contract
+### [x] BE-11 — Align the review persistence contract
 
 - **Priority:** P2; fix before offering review entry, or disable the feature. **Review:** F12, confirmed. **Effort:** S.
 - **Inspect:** `models/Review.js`; `routes/reviewRoutes.js`; frontend review DTOs and employee review form.
@@ -134,7 +134,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Agree on one canonical field and whether an appointment reference is required. Align validation and responses. Handle compatibility explicitly; do not claim already discarded text can be recovered from the database.
 - **Acceptance:** Nonempty review text survives create/read/reload and validation failures do not appear successful.
 - **Verify:** API contract tests with nonempty text and the agreed appointment-reference behavior.
-- **Coordinate:** FE-06. **Evidence:** Pending.
+- **Coordinate:** FE-06. **Evidence:** Done — the claimed mismatch is not present in current code: both `models/Review.js` and the frontend review form (`src/pages/Employees.tsx`) consistently use the field name `text`. Checkbox was stale (this was either already fixed before the reviewed baseline commit, or the review's premise was mistaken); no code change was needed.
 
 ### [ ] BE-12 — Establish repeatable backend release verification
 

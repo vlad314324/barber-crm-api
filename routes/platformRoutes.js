@@ -8,7 +8,8 @@ const Invitation = require('../models/platform/Invitation');
 const verifyPlatformAdmin = require('../middleware/verifyPlatformAdmin');
 const { sendSalonDeactivatedEmail } = require('../config/mailer');
 const { getTenantContext } = require('../config/tenantDb');
-const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
+const { validatePassword } = require('../utils/password');
 const {
   DEFAULT_TIMEZONE, buildFunnelSummary, buildUsageSummary, summarizeAppointments, buildDailyTrend,
   buildNorthStarSeries, buildActivationMetrics, buildRetentionCohorts, buildChurnRate,
@@ -27,6 +28,10 @@ router.post('/auth/login', async (req, res) => {
   const missing = firstMissingField(req.body, ['email', 'password']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+  const nonString = firstNonStringField(req.body, ['email', 'password']);
+  if (nonString) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Поле "${nonString}" має бути рядком`, { field: nonString });
   }
 
   try {
@@ -53,6 +58,12 @@ router.post('/admins', async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  const nonString = firstNonStringField(req.body, ['name', 'email']);
+  if (nonString) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Поле "${nonString}" має бути рядком`, { field: nonString });
+  }
+  const pwErr = validatePassword(password);
+  if (pwErr) return sendError(res, 400, ERROR_CODES[pwErr.code], pwErr.msg, { field: 'password' });
 
   const createAdmin = async () => {
     try {

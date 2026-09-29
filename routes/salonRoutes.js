@@ -7,7 +7,8 @@ const Invitation = require('../models/platform/Invitation');
 const { getTenantContext } = require('../config/tenantDb');
 const { slugify } = require('../utils/slugify');
 const { salonRegisterLimiter } = require('../middleware/rateLimit');
-const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
+const { validatePassword } = require('../utils/password');
 
 // Макс. 32 символи: dbName = `salon_${slug}` (префікс 6 байт), а MongoDB
 // Atlas обмежує назву бази 38 байтами — 6+32=38, рівно на межі.
@@ -40,6 +41,12 @@ router.post('/register', salonRegisterLimiter, async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  const nonString = firstNonStringField(req.body, ['salonName', 'ownerName', 'ownerEmail', 'token', 'slug']);
+  if (nonString) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Поле "${nonString}" має бути рядком`, { field: nonString });
+  }
+  const pwErr = validatePassword(ownerPassword);
+  if (pwErr) return sendError(res, 400, ERROR_CODES[pwErr.code], pwErr.msg, { field: 'ownerPassword' });
 
   const normalizedEmail = ownerEmail.toLowerCase().trim();
 

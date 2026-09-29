@@ -10,6 +10,7 @@ const ERROR_CODES = {
   INVALID_TOKEN: 'INVALID_TOKEN',
   INVALID_CURRENT_PASSWORD: 'INVALID_CURRENT_PASSWORD',
   PASSWORD_TOO_SHORT: 'PASSWORD_TOO_SHORT',
+  PASSWORD_TOO_WEAK: 'PASSWORD_TOO_WEAK',
   ADMIN_ROLE_REQUIRED: 'ADMIN_ROLE_REQUIRED',
   INVALID_ROLE: 'INVALID_ROLE',
   RESET_TOKEN_INVALID: 'RESET_TOKEN_INVALID',
@@ -97,6 +98,20 @@ function firstMissingField(body, fields) {
   return null;
 }
 
+// Перевіряє, що перелічені поля — саме рядки (не об'єкти), повертає ім'я
+// першого-не-рядка або null. Використовується на публічних/автентифікаційних
+// роутах ПЕРЕД тим, як значення потрапить у Mongoose-запит (напр.
+// `Model.findOne({ email })`) — інакше JSON-тіло на кшталт
+// `{"email": {"$gt": ""}}` пройшло б як query-оператор замість точного
+// значення (NoSQL-injection через оператор замість рядка).
+function firstNonStringField(body, fields) {
+  for (const field of fields) {
+    const value = body?.[field];
+    if (value !== undefined && value !== null && typeof value !== 'string') return field;
+  }
+  return null;
+}
+
 // Уніфікована обробка помилок Mongoose ValidationError -> 400 VALIDATION_ERROR,
 // решта -> 500 SERVER_ERROR.
 function handleRouteError(res, err, context) {
@@ -112,4 +127,4 @@ function handleRouteError(res, err, context) {
   return sendError(res, 500, ERROR_CODES.SERVER_ERROR, 'Внутрішня помилка сервера');
 }
 
-module.exports = { ERROR_CODES, sendError, firstMissingField, handleRouteError };
+module.exports = { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError };

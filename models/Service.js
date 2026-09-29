@@ -28,10 +28,12 @@ const serviceSchema = new mongoose.Schema({
   price: {
     type: Number,
     required: true,
+    min: [0.01, 'Ціна має бути більшою за 0'],
   },
   duration: {
     type: Number, // тривалість у хвилинах
     required: true,
+    min: [1, 'Тривалість має бути більшою за 0'],
   },
   // Необов'язкові верхні межі діапазону "від-до" — активні лише коли салон
   // увімкнув Settings.serviceRangesEnabled (перевірка на рівні роутів, не

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const requireRole = require('../middleware/requireRole');
+const { validatePassword } = require('../utils/password');
 
 // GET /api/:salonSlug/settings — отримати налаштування
 router.get('/', async (req, res) => {
@@ -63,9 +64,8 @@ router.put('/change-password', async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
-  if (newPassword.length < 6) {
-    return sendError(res, 400, ERROR_CODES.PASSWORD_TOO_SHORT, 'Новий пароль мінімум 6 символів');
-  }
+  const pwErr = validatePassword(newPassword);
+  if (pwErr) return sendError(res, 400, ERROR_CODES[pwErr.code], pwErr.msg, { field: 'newPassword' });
 
   try {
     const user = await User.findById(req.user.id);

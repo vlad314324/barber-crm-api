@@ -4,8 +4,9 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const verifyToken = require('../middleware/verifyToken');
 const { loginLimiter, forgotPasswordLimiter, resetPasswordLimiter } = require('../middleware/rateLimit');
-const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
+const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { sendPasswordResetEmail } = require('../config/mailer');
+const { validatePassword } = require('../utils/password');
 
 // POST /api/:salonSlug/auth/register — admin-only: створити логін для співробітника
 router.post('/register', verifyToken, async (req, res) => {
@@ -20,6 +21,13 @@ router.post('/register', verifyToken, async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  const nonString = firstNonStringField(req.body, ['name', 'email']);
+  if (nonString) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Поле "${nonString}" має бути рядком`, { field: nonString });
+  }
+
+  const pwErr = validatePassword(password);
+  if (pwErr) return sendError(res, 400, ERROR_CODES[pwErr.code], pwErr.msg, { field: 'password' });
 
   if (!['admin', 'barber'].includes(role)) {
     return sendError(res, 400, ERROR_CODES.INVALID_ROLE, 'Роль має бути "admin" або "barber"', { field: 'role' });
@@ -66,8 +74,9 @@ router.put('/staff/:employeeId', verifyToken, async (req, res) => {
   if (role !== undefined && !['admin', 'barber'].includes(role)) {
     return sendError(res, 400, ERROR_CODES.INVALID_ROLE, 'Роль має бути "admin" або "barber"', { field: 'role' });
   }
-  if (password !== undefined && password.length < 6) {
-    return sendError(res, 400, ERROR_CODES.PASSWORD_TOO_SHORT, 'Новий пароль мінімум 6 символів', { field: 'password' });
+  if (password !== undefined) {
+    const pwErr = validatePassword(password);
+    if (pwErr) return sendError(res, 400, ERROR_CODES[pwErr.code], pwErr.msg, { field: 'password' });
   }
   if (role === undefined && password === undefined) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, 'Вкажіть роль або новий пароль', { field: 'role' });
@@ -99,6 +108,10 @@ router.post('/login', loginLimiter, async (req, res) => {
   const missing = firstMissingField(req.body, ['email', 'password']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  }
+  const nonString = firstNonStringField(req.body, ['email', 'password']);
+  if (nonString) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Поле "${nonString}" має бути рядком`, { field: nonString });
   }
 
   try {
@@ -174,6 +187,9 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  if (firstNonStringField(req.body, ['email'])) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Поле "email" має бути рядком', { field: 'email' });
+  }
 
   // Відповідь завжди однакова, незалежно від того, чи знайдено користувача чи
   // надіслався лист — інакше запит можна використати, щоб дізнатись, які email
@@ -210,9 +226,11 @@ router.post('/reset-password', resetPasswordLimiter, async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
-  if (password.length < 6) {
-    return sendError(res, 400, ERROR_CODES.PASSWORD_TOO_SHORT, 'Новий пароль мінімум 6 символів', { field: 'password' });
+  if (firstNonStringField(req.body, ['token'])) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Поле "token" має бути рядком', { field: 'token' });
   }
+  const pwErr = validatePassword(password);
+  if (pwErr) return sendError(res, 400, ERROR_CODES[pwErr.code], pwErr.msg, { field: 'password' });
 
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
