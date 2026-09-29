@@ -143,6 +143,13 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       const totalDuration = rawDuration ? parseFlexibleNumber(rawDuration) : resolvedServices.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
       const totalPrice = rawPrice ? parseFlexibleNumber(rawPrice) : resolvedServices.reduce((sum, s) => sum + s.price, 0);
       if (Number.isNaN(totalDuration) || Number.isNaN(totalPrice)) throw new Error('Total Duration і Total Price мають бути числами');
+      if (totalDuration <= 0) throw new Error('Total Duration має бути більшою за нуль');
+
+      // Той самий чек, що й на ручному створенні/оновленні (CRM POST/PUT) —
+      // імпорт раніше міг призначити майстру послугу, якої він не надає.
+      if (!canEmployeePerformServices(employee, resolvedServices.map((s) => s._id))) {
+        throw new Error(`Майстер "${employee.name}" не надає одну або декілька з обраних послуг`);
+      }
 
       const status = resolveAlias(STATUS_ALIASES, String(row.status || 'Scheduled').trim());
       if (!['Scheduled', 'Completed', 'Cancelled', 'No-show'].includes(status)) throw new Error(`Невідомий статус "${status}"`);
@@ -224,6 +231,9 @@ router.post('/', async (req, res) => {
   if (!parseCalendarDate(date)) {
     return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
   }
+  if (Number(totalDuration) <= 0) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Тривалість має бути більшою за нуль', { field: 'totalDuration' });
+  }
 
   try {
     if (Array.isArray(services) && services.length > 0) {
@@ -275,6 +285,9 @@ router.put('/:id', async (req, res) => {
   }
   if (req.body.date !== undefined && !parseCalendarDate(req.body.date)) {
     return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
+  }
+  if (req.body.totalDuration !== undefined && Number(req.body.totalDuration) <= 0) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Тривалість має бути більшою за нуль', { field: 'totalDuration' });
   }
   try {
     const existing = await Appointment.findById(req.params.id);

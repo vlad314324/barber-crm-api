@@ -198,7 +198,7 @@ router.get('/available-slots', async (req, res) => {
 
 // POST /api/:salonSlug/booking — створити запис
 router.post('/', publicBookingLimiter, async (req, res) => {
-  const { Employee, Service, Appointment, Client, Settings } = req.models;
+  const { Employee, Service, Appointment, Client, Settings, IdempotencyKey } = req.models;
   const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang } = req.body;
 
   const missing = firstMissingField(req.body, ['employeeId', 'serviceIds', 'date', 'startTime', 'clientName', 'clientPhone']);
@@ -221,6 +221,28 @@ router.post('/', publicBookingLimiter, async (req, res) => {
   }
 
   const preferredLang = lang === 'en' ? 'en' : 'uk';
+
+  // Необов'язковий Idempotency-Key: коли переданий, повторний запит із тим
+  // самим ключем (втрачена мережею відповідь, подвійний клік) повертає ту
+  // саму відповідь замість другого запису чи хибного "слот вже зайнято".
+  // Без заголовка поведінка не змінюється (зворотна сумісність).
+  const idempotencyKeyHeader = req.headers['idempotency-key'];
+  const idempotencyKey = typeof idempotencyKeyHeader === 'string' ? idempotencyKeyHeader.slice(0, 200) : null;
+  let idemDoc = null;
+  if (idempotencyKey) {
+    try {
+      idemDoc = await IdempotencyKey.create({ key: idempotencyKey, status: 'pending' });
+    } catch (err) {
+      if (err.code === 11000) {
+        const existing = await IdempotencyKey.findOne({ key: idempotencyKey });
+        if (existing?.status === 'done') {
+          return res.status(existing.responseStatus).json(existing.responseBody);
+        }
+        return sendError(res, 409, ERROR_CODES.BOOKING_BUSY, 'Запит із цим ключем уже обробляється, зачекайте');
+      }
+      throw err;
+    }
+  }
 
   try {
     const employee = await Employee.findById(employeeId);
@@ -359,7 +381,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       console.error('Не вдалося створити сповіщення про бронювання:', notifErr.message);
     }
 
-    res.status(201).json({
+    const responseBody = {
       msg: 'Запис створено успішно',
       appointment: {
         id: appointment._id,
@@ -370,12 +392,25 @@ router.post('/', publicBookingLimiter, async (req, res) => {
         clientName,
         preferredLang,
       }
-    });
+    };
+    if (idemDoc) {
+      await IdempotencyKey.updateOne({ _id: idemDoc._id }, { $set: { status: 'done', responseStatus: 201, responseBody } }).catch(() => {});
+    }
+    res.status(201).json(responseBody);
   } catch (err) {
     if (err.code === 'LOCK_TIMEOUT') {
       return sendError(res, 409, ERROR_CODES.BOOKING_BUSY, 'Забагато одночасних спроб бронювання цього часу — спробуйте ще раз');
     }
     handleRouteError(res, err, 'booking/create');
+  } finally {
+    // Досяг сюди й лишився 'pending' -> ця спроба нічого не створила
+    // (валідаційна помилка, реальний конфлікт слоту, throw) -> звільняємо
+    // ключ, щоб виправлений повторний запит з тим самим Idempotency-Key
+    // міг пройти, а не застряг до TTL. Якщо вже позначено 'done' вище —
+    // цей delete просто нічого не знайде (умова status:'pending' у фільтрі).
+    if (idemDoc) {
+      await IdempotencyKey.deleteOne({ _id: idemDoc._id, status: 'pending' }).catch(() => {});
+    }
   }
 });
 

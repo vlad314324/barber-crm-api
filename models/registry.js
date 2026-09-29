@@ -10,8 +10,9 @@ const Notification = require('./Notification');
 const AppointmentLock = require('./AppointmentLock');
 const AnalyticsEvent = require('./AnalyticsEvent');
 const CrmSession = require('./CrmSession');
+const IdempotencyKey = require('./IdempotencyKey');
 
-const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession };
+const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession, IdempotencyKey };
 
 function getModels(connection) {
   const models = {};
