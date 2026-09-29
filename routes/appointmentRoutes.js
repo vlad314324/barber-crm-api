@@ -7,7 +7,7 @@ const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate } = require('../utils/scheduleWindow');
 const {
   buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, parseFlexibleDate,
-  resolveAlias, STATUS_ALIASES,
+  resolveAlias, STATUS_ALIASES, MAX_IMPORT_ROWS,
 } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
@@ -41,15 +41,42 @@ const APPOINTMENT_IMPORT_COLUMNS = [
   { header: 'Preferred Lang', key: 'preferredLang', aliases: ['Мова'] },
 ];
 
-// GET all appointments
+const APPOINTMENT_STATUSES = ['Scheduled', 'Completed', 'Cancelled', 'No-show'];
+
+// GET all appointments — той самий opt-in патерн, що й GET /clients
+// (clientRoutes.js): без ?page — точно попередня поведінка (плаский
+// масив УСІХ записів), бо на неї покладаються Dashboard.tsx та сам
+// календар в Appointments.tsx. З ?page — обмежений/відсортований шлях
+// для майбутнього використання, коли історія записів стане великою.
 router.get('/', async (req, res) => {
   const { Appointment } = req.models;
   try {
-    const appointments = await Appointment.find()
-      .populate('client')
-      .populate('employee')
-      .populate('services');
-    res.json(appointments);
+    if (req.query.page === undefined) {
+      const appointments = await Appointment.find()
+        .populate('client')
+        .populate('employee')
+        .populate('services');
+      return res.json(appointments);
+    }
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(Math.max(1, Number(req.query.limit) || 25), 100);
+    const sortBy = req.query.sortBy === 'createdAt' ? 'createdAt' : 'date';
+    const sortDir = req.query.sortDir === 'asc' ? 1 : -1;
+    const matchStage = APPOINTMENT_STATUSES.includes(req.query.status) ? { status: req.query.status } : {};
+
+    const [appointments, total] = await Promise.all([
+      Appointment.find(matchStage)
+        .sort({ [sortBy]: sortDir, _id: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('client')
+        .populate('employee')
+        .populate('services'),
+      Appointment.countDocuments(matchStage),
+    ]);
+
+    res.json({ appointments, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) {
     handleRouteError(res, err, 'appointments/list');
   }
@@ -87,11 +114,14 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
   const { Appointment, Client, Employee, Service, Settings } = req.models;
   const settings = await Settings.findOne();
   const rangesEnabled = !!settings?.serviceRangesEnabled;
-  let rows, missingRequired, presentKeys;
+  let rows, missingRequired, presentKeys, tooManyRows;
   try {
-    ({ rows, missingRequired, presentKeys } = parseWorkbookBuffer(req.file.buffer, APPOINTMENT_IMPORT_COLUMNS));
+    ({ rows, missingRequired, presentKeys, tooManyRows } = parseWorkbookBuffer(req.file.buffer, APPOINTMENT_IMPORT_COLUMNS));
   } catch (err) {
     return sendError(res, 400, ERROR_CODES.IMPORT_INVALID_FILE_TYPE, 'Не вдалося прочитати файл. Перевірте формат .xlsx/.xls/.csv');
+  }
+  if (tooManyRows) {
+    return sendError(res, 400, ERROR_CODES.IMPORT_TOO_MANY_ROWS, `Файл містить забагато рядків (максимум ${MAX_IMPORT_ROWS})`, { max: MAX_IMPORT_ROWS });
   }
   if (!presentKeys.has('clientEmail') && !presentKeys.has('clientPhone')) {
     missingRequired = [...missingRequired, 'Client Email або Client Phone (потрібна хоча б одна)'];

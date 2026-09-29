@@ -1,5 +1,13 @@
 const XLSX = require('xlsx');
 
+// Кожен рядок імпорту в маршрутах-споживачах (clients/employees/services/
+// appointments) робить кілька послідовних await-запитів до БД (пошук
+// клієнта/майстра/послуги, потім запис) — без верхньої межі дуже великий
+// файл міг би тримати HTTP-запит (і процес) зайнятим невизначено довго.
+// Розмір самого файлу вже обмежений на рівні multer (middleware/upload.js),
+// але 5MB тексту все одно можуть вміщувати десятки тисяч коротких рядків.
+const MAX_IMPORT_ROWS = 5000;
+
 function normalizeLabel(label) {
   return String(label ?? '')
     .replace(/^﻿/, '') // BOM, який деякі експортери (Google Sheets, 1С) лишають на першому заголовку
@@ -78,7 +86,7 @@ function parseWorkbookBuffer(buffer, columns) {
   // presentKeys — для composite-перевірок на кшталт "потрібна хоч одна з двох
   // колонок" (напр. Client Email АБО Client Phone), які не виражаються через
   // просте required: true на одній колонці.
-  return { rows, missingRequired, presentKeys };
+  return { rows, missingRequired, presentKeys, tooManyRows: rows.length > MAX_IMPORT_ROWS };
 }
 
 // Приймає "300", "300 грн", "1 200,50", "1,200.50" тощо.
@@ -168,4 +176,5 @@ module.exports = {
   ROLE_ALIASES,
   STATUS_ALIASES,
   CATEGORY_ALIASES,
+  MAX_IMPORT_ROWS,
 };

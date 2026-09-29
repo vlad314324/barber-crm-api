@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
-const { buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, resolveAlias, ROLE_ALIASES } = require('../utils/excel');
+const { buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, resolveAlias, ROLE_ALIASES, MAX_IMPORT_ROWS } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 
@@ -96,11 +96,14 @@ router.get('/export', requireRole('admin'), async (req, res) => {
 // POST /employees/import
 router.post('/import', requireRole('admin'), importUpload('file'), async (req, res) => {
   const { Employee } = req.models;
-  let rows, missingRequired;
+  let rows, missingRequired, tooManyRows;
   try {
-    ({ rows, missingRequired } = parseWorkbookBuffer(req.file.buffer, EMPLOYEE_IMPORT_COLUMNS));
+    ({ rows, missingRequired, tooManyRows } = parseWorkbookBuffer(req.file.buffer, EMPLOYEE_IMPORT_COLUMNS));
   } catch (err) {
     return sendError(res, 400, ERROR_CODES.IMPORT_INVALID_FILE_TYPE, 'Не вдалося прочитати файл. Перевірте формат .xlsx/.xls/.csv');
+  }
+  if (tooManyRows) {
+    return sendError(res, 400, ERROR_CODES.IMPORT_TOO_MANY_ROWS, `Файл містить забагато рядків (максимум ${MAX_IMPORT_ROWS})`, { max: MAX_IMPORT_ROWS });
   }
   if (missingRequired.length > 0) {
     return sendError(res, 400, ERROR_CODES.IMPORT_MISSING_COLUMNS, `У файлі відсутні обов'язкові колонки: ${missingRequired.join(', ')}`);

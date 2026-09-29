@@ -55,16 +55,24 @@ router.get('/dashboard', async (req, res) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
 
-    // Employee performance
-    const empPerformance = await Promise.all(employees.map(async emp => {
-      const appts = await Appointment.find({ employee: emp._id, status: 'Completed' });
+    // Employee performance — групуємо вже завантажений allAppts по майстру
+    // замість окремого запиту на кожного (був N+1: один Appointment.find
+    // на employee всередині Promise.all).
+    const apptsByEmployee = new Map();
+    allAppts.forEach(a => {
+      const key = String(a.employee);
+      if (!apptsByEmployee.has(key)) apptsByEmployee.set(key, []);
+      apptsByEmployee.get(key).push(a);
+    });
+    const empPerformance = employees.map(emp => {
+      const appts = apptsByEmployee.get(String(emp._id)) || [];
       return {
         name: emp.name,
         appointments: appts.length,
         revenue: appts.reduce((s, a) => s + a.totalPrice, 0),
         rating: emp.rating || 0,
       };
-    }));
+    });
 
     res.json({
       totalRevenue: allAppts.reduce((s, a) => s + a.totalPrice, 0),
@@ -204,14 +212,28 @@ router.get('/rfm', async (req, res) => {
     const clients = await Client.find();
     const now = new Date();
 
-    const rfmData = await Promise.all(clients.map(async client => {
-      const appts = await Appointment.find({ client: client._id, status: 'Completed' }).sort({ date: -1 });
-      if (appts.length === 0) return null;
-      const R = Math.floor((now.getTime() - new Date(appts[0].date).getTime()) / (1000 * 60 * 60 * 24));
-      const F = appts.length;
-      const M = appts.reduce((s, a) => s + a.totalPrice, 0);
-      return { clientId: client._id, name: client.name, R, F, M };
-    }));
+    // Один запит замість одного на клієнта (був N+1) — та сама
+    // sort({date:-1}) гарантія, що на клієнта перше входження є
+    // найостаннішим візитом, що й у clientRoutes.js computeClientStats.
+    const appts = await Appointment.find({ status: 'Completed' }).sort({ date: -1 }).select('client date totalPrice');
+    const statsByClient = new Map();
+    appts.forEach(a => {
+      const key = String(a.client);
+      const entry = statsByClient.get(key);
+      if (entry) {
+        entry.F += 1;
+        entry.M += a.totalPrice;
+      } else {
+        statsByClient.set(key, { F: 1, M: a.totalPrice, latestDate: a.date });
+      }
+    });
+
+    const rfmData = clients.map(client => {
+      const s = statsByClient.get(String(client._id));
+      if (!s) return null;
+      const R = Math.floor((now.getTime() - new Date(s.latestDate).getTime()) / (1000 * 60 * 60 * 24));
+      return { clientId: client._id, name: client.name, R, F: s.F, M: s.M };
+    });
 
     const valid = rfmData.filter(v => v !== null);
     if (valid.length === 0) return res.json({ segments: [], summary: [] });

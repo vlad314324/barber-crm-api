@@ -15,4 +15,9 @@ const clientSchema = new mongoose.Schema({
   },
 });
 
+// Використовується в findOne({email}) при логіні клієнта на публічному
+// бронюванні, ре-використанні існуючого клієнта при імпорті тощо — без
+// індексу це повний скан колекції на кожен такий пошук.
+clientSchema.index({ email: 1 });
+
 module.exports = clientSchema;
