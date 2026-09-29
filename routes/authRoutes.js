@@ -93,7 +93,7 @@ router.put('/staff/:employeeId', verifyToken, async (req, res) => {
 
 // POST /api/:salonSlug/auth/login
 router.post('/login', loginLimiter, async (req, res) => {
-  const { User } = req.models;
+  const { User, CrmSession } = req.models;
   const { email, password } = req.body;
 
   const missing = firstMissingField(req.body, ['email', 'password']);
@@ -114,9 +114,37 @@ router.post('/login', loginLimiter, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
-    res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+
+    // Активність у кабінеті бачить лише platform-admin (SalonDetailModal
+    // тощо) — сам користувач ні про сесію, ні про heartbeat нічого не
+    // знає. Помилка запису сесії не має заважати логіну.
+    let crmSessionId = null;
+    try {
+      const session = await CrmSession.create({ user: user._id, role: user.role });
+      crmSessionId = session._id;
+    } catch (sessionErr) {
+      console.error('Не вдалося створити CrmSession:', sessionErr.message);
+    }
+
+    res.json({ token, crmSessionId, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     handleRouteError(res, err, 'auth/login');
+  }
+});
+
+// POST /api/:salonSlug/auth/heartbeat — періодичний "пінг" активності в
+// кабінеті (для platform-admin аналітики часу, проведеного в CRM). Best-
+// effort: невалідний/чужий sessionId просто ігнорується без 404/500.
+router.post('/heartbeat', verifyToken, async (req, res) => {
+  const { CrmSession } = req.models;
+  const { sessionId } = req.body;
+  try {
+    if (sessionId) {
+      await CrmSession.updateOne({ _id: sessionId, user: req.user.id }, { lastActiveAt: new Date() });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: true }); // best-effort — невалідний ObjectId тощо не повинен шуміти клієнту
   }
 });
 

@@ -6,7 +6,8 @@ const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { hasOverlap } = require('../utils/appointmentOverlap');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
-const { publicBookingLimiter } = require('../middleware/rateLimit');
+const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
+const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
@@ -35,16 +36,31 @@ router.get('/services', async (req, res) => {
   }
 });
 
-// POST /api/:salonSlug/booking/visit — фіксує факт відкриття сторінки
-// бронювання (для конверсії "переходи → бронювання" в панелі платформного
-// адміна). Рахуємо кожне завантаження сторінки як один візит, без
-// дедуплікації по відвідувачу.
-router.post('/visit', async (req, res) => {
+// POST /api/:salonSlug/booking/event — крок воронки публічної сторінки
+// бронювання (відкриття, вибір майстра/послуги/часу, введення контактів,
+// підсумок бронювання). Бачить це лише platform-admin — власник салону й
+// майстри в tenant-CRM доступу до цих даних не мають (окрема автентифікація,
+// див. routes/platformRoutes.js). Best-effort: фронтенд шле fire-and-forget,
+// невалідний `event` просто ігнорується без шуму в консолі клієнта.
+router.post('/event', analyticsEventLimiter, async (req, res) => {
+  const { event, visitorId, sessionId, utmSource, utmMedium, utmCampaign, referrer, meta } = req.body;
+  if (!EVENT_TYPES.includes(event)) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, 'Некоректний тип події', { field: 'event' });
+  }
   try {
-    await req.models.Visit.create({});
+    await req.models.AnalyticsEvent.create({
+      event,
+      visitorId: typeof visitorId === 'string' ? visitorId.slice(0, 100) : undefined,
+      sessionId: typeof sessionId === 'string' ? sessionId.slice(0, 100) : undefined,
+      utmSource: typeof utmSource === 'string' ? utmSource.slice(0, 100) : undefined,
+      utmMedium: typeof utmMedium === 'string' ? utmMedium.slice(0, 100) : undefined,
+      utmCampaign: typeof utmCampaign === 'string' ? utmCampaign.slice(0, 100) : undefined,
+      referrer: typeof referrer === 'string' ? referrer.slice(0, 500) : undefined,
+      meta,
+    });
     res.status(201).json({ ok: true });
   } catch (err) {
-    handleRouteError(res, err, 'booking/visit');
+    handleRouteError(res, err, 'booking/event');
   }
 });
 

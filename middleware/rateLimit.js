@@ -16,5 +16,9 @@ const forgotPasswordLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, ..
 const resetPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, ...baseOptions });
 const publicBookingLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, ...baseOptions });
 const salonRegisterLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, ...baseOptions });
+// Аналітичні події воронки бронювання (page_view, вибір майстра/послуги/
+// часу тощо) — до кількох подій на одне відвідування, значно частіше за
+// саме бронювання, тож окремий, помітно щедріший ліміт.
+const analyticsEventLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 60, ...baseOptions });
 
-module.exports = { loginLimiter, forgotPasswordLimiter, resetPasswordLimiter, publicBookingLimiter, salonRegisterLimiter };
+module.exports = { loginLimiter, forgotPasswordLimiter, resetPasswordLimiter, publicBookingLimiter, salonRegisterLimiter, analyticsEventLimiter };

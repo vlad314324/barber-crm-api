@@ -133,13 +133,13 @@ router.get('/salons/:id/analytics', verifyPlatformAdmin, async (req, res) => {
     if (!salon) return sendError(res, 404, ERROR_CODES.SALON_NOT_FOUND, 'Салон не знайдено');
 
     const { models } = await getTenantContext(salon.dbName);
-    const totalVisits = await models.Visit.countDocuments();
+    const totalVisits = await models.AnalyticsEvent.countDocuments({ event: 'page_view' });
     const totalBookings = await models.Appointment.countDocuments({ source: 'public' });
 
     const TREND_DAYS = 14;
     const since = new Date(Date.now() - TREND_DAYS * 24 * 60 * 60 * 1000);
     const [recentVisits, recentBookings] = await Promise.all([
-      models.Visit.find({ createdAt: { $gte: since } }).select('createdAt'),
+      models.AnalyticsEvent.find({ event: 'page_view', createdAt: { $gte: since } }).select('createdAt'),
       models.Appointment.find({ source: 'public', createdAt: { $gte: since } }).select('createdAt'),
     ]);
     const dailyTrend = buildDailyTrend(recentVisits, recentBookings, TREND_DAYS);

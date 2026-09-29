@@ -7,10 +7,11 @@ const Review = require('./Review');
 const Settings = require('./Settings');
 const User = require('./User');
 const Notification = require('./Notification');
-const Visit = require('./Visit');
 const AppointmentLock = require('./AppointmentLock');
+const AnalyticsEvent = require('./AnalyticsEvent');
+const CrmSession = require('./CrmSession');
 
-const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, Visit, AppointmentLock };
+const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession };
 
 function getModels(connection) {
   const models = {};
