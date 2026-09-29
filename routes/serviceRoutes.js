@@ -223,10 +223,23 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
 });
 
 router.delete('/:id', requireRole('admin'), async (req, res) => {
-  const { Service } = req.models;
+  const { Service, Appointment } = req.models;
   try {
-    const service = await Service.findByIdAndDelete(req.params.id);
+    const service = await Service.findById(req.params.id);
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
+
+    // Hard delete лишав би `Appointment.services` з посиланням на
+    // неіснуючу послугу — populate() мовчки випускає такі елементи з
+    // масиву, і чек/історія показують запис без послуги. Той самий
+    // history-guard патерн, що й для клієнтів/майстрів.
+    const appointmentCount = await Appointment.countDocuments({ services: service._id });
+    if (appointmentCount > 0) {
+      return sendError(res, 400, ERROR_CODES.SERVICE_HAS_HISTORY,
+        `Цю послугу використано в ${appointmentCount} записах — видалення заблоковано, щоб не зіпсувати історію`,
+        { appointmentCount });
+    }
+
+    await service.deleteOne();
     res.json({ msg: 'Послугу видалено' });
   } catch (err) {
     handleRouteError(res, err, 'services/delete');

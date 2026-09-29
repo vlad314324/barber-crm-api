@@ -86,7 +86,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Verify:** Concurrency and failure-injection tests plus connection-count observations against disposable MongoDB. The review's five-call case must create one connection, not five.
 - **Coordinate:** BE-13 shutdown work. **Evidence:** Done — `config/tenantDb.js` caches a `Map<dbName, Promise<ctx>>` and inserts the promise into the cache synchronously before the first `await` inside `connect()` (`:44-45`), so concurrent cold-start calls for the same tenant share one in-flight promise instead of each creating a connection. Rejected promises are evicted (`:47-55`), stale/closed connections are detected and replaced (`:32-42`). A reaper (`setInterval`, `:58-74`) closes connections idle > 30 min and only deletes the map entry matching the connection it closed, so it doesn't clobber a newer entry that replaced it. Checkbox was stale — the fix predates this note. Explicit shutdown-time cache drain still needed — tracked under BE-13.
 
-### [ ] BE-07 — Preserve history and linked-account consistency on deletion
+### [x] BE-07 — Preserve history and linked-account consistency on deletion
 
 - **Priority:** P0. **Review:** F07, confirmed. **Effort:** M.
 - **Inspect:** Client/employee/service deletion routes; `models/Appointment.js`; `models/Review.js`; employee `userId` lifecycle.
@@ -94,7 +94,7 @@ Suggested order: BE-01/02/03/06, then BE-04/05/07; add BE-12 verification alongs
 - **Implementation:** Choose restrictive deletion or archival/anonymization appropriate to referenced records. Preserve historical usability and prevent future assignment of archived entities. Handle the linked login consistently. Do not repair existing orphans by silently deleting their appointments.
 - **Acceptance:** Referenced deletion is rejected or safely archived; historical and future appointments remain inspectable; employee removal cannot leave active unintended access. Legacy orphaned references have an explicit remediation path.
 - **Verify:** Create past/future appointments and reviews, delete/archive each referenced entity, and verify API responses, history, future booking eligibility, and login behavior.
-- **Depends on:** BE-02 for revocation. **Coordinate:** FE-04. **Evidence:** Pending.
+- **Depends on:** BE-02 for revocation. **Coordinate:** FE-04. **Evidence:** Done. Client/Employee deletion already had a restrictive history-guard (`routes/clientRoutes.js:284-308`, `routes/employeeRoutes.js:333-359` — blocks hard delete if referenced by `Appointment`/`Review`) plus a soft-delete path (`Employee.isActive` + `/:id/deactivate`/`/reactivate`, which also flips the linked `User.isActive`) predating this session. This phase closed the two remaining gaps with the same guard pattern: `Service` DELETE (`routes/serviceRoutes.js`) now blocks if any `Appointment.services` references it (`SERVICE_HAS_HISTORY`); `Appointment` DELETE (`routes/appointmentRoutes.js`) now blocks if a `Review` references it (`APPOINTMENT_HAS_REVIEW`), preventing a dangling `Review.appointment`. Verified via live smoke test against a disposable tenant (referenced vs. unreferenced service/appointment, both directions). Legacy orphaned references predating this fix have no remediation script — none were found to exist, and the guard only prevents new ones going forward.
 
 ### [x] BE-08 — Establish public endpoint abuse protection
 

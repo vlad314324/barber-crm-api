@@ -361,10 +361,19 @@ router.post('/:id/notes', async (req, res) => {
 
 // DELETE appointment
 router.delete('/:id', requireRole('admin'), async (req, res) => {
-  const { Appointment } = req.models;
+  const { Appointment, Review } = req.models;
   try {
     const appointment = await Appointment.findById(req.params.id);
     if (!appointment) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+
+    // Hard delete лишав би Review.appointment висячим посиланням.
+    const reviewCount = await Review.countDocuments({ appointment: appointment._id });
+    if (reviewCount > 0) {
+      return sendError(res, 400, ERROR_CODES.APPOINTMENT_HAS_REVIEW,
+        `На цей запис лишено відгук (${reviewCount}) — видалення заблоковано`,
+        { reviewCount });
+    }
+
     await appointment.deleteOne();
     res.json({ msg: 'Appointment removed' });
   } catch (err) {
