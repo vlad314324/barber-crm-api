@@ -78,7 +78,7 @@ router.post('/register', salonRegisterLimiter, async (req, res) => {
   const dbName = `salon_${slug}`;
   let salon;
   try {
-    salon = await Salon.create({ name: salonName, slug, dbName, ownerEmail: normalizedEmail, isActive: false });
+    salon = await Salon.create({ name: salonName, slug, dbName, ownerEmail: normalizedEmail, isActive: false, provisioningState: 'pending' });
 
     const { models } = await getTenantContext(dbName);
     await models.Settings.create({ shopName: salonName, email: normalizedEmail });
@@ -87,6 +87,7 @@ router.post('/register', salonRegisterLimiter, async (req, res) => {
 
     salon.isActive = true;
     salon.provisionedAt = new Date();
+    salon.provisioningState = 'active';
     await salon.save();
 
     invitation.used = true;
@@ -106,13 +107,25 @@ router.post('/register', salonRegisterLimiter, async (req, res) => {
     });
   } catch (err) {
     if (salon) {
+      // Позначаємо стан ДО спроби cleanup — окремий durable-запис, а не
+      // лише розрахунок на те, що видалення документа нижче точно
+      // спрацює. Якщо сам cleanup теж провалиться (dropDatabase/delete),
+      // цей документ лишиться в реєстрі з provisioningState:'failed' —
+      // слід для scripts/reconcileStuckProvisioning.js замість повністю
+      // невидимого osиротілого tenant-DB без жодного запису в реєстрі.
+      try {
+        salon.provisioningState = 'failed';
+        await salon.save();
+      } catch (markErr) {
+        console.error('[salons/register] failed to mark provisioningState=failed', markErr);
+      }
       try {
         const { connection } = await getTenantContext(dbName);
         await connection.dropDatabase();
+        await Salon.deleteOne({ _id: salon._id });
       } catch (cleanupErr) {
-        console.error('[salons/register] cleanup dropDatabase failed', cleanupErr);
+        console.error('[salons/register] cleanup failed — salon left in provisioningState=failed for manual review', cleanupErr);
       }
-      await Salon.deleteOne({ _id: salon._id }).catch(() => {});
     }
     handleRouteError(res, err, 'salons/register');
   }

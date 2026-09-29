@@ -8,6 +8,16 @@ const salonSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: false },
   provisionedAt: { type: Date },
 
+  // Явний стан провіжнінгу (крім isActive/provisionedAt, які лишились для
+  // сумісності з рештою коду) — потрібен, щоб відрізнити "щойно створений,
+  // провіжнінг ще триває" від "процес впав десь посередині й ніхто вже не
+  // довершить" без ручного розбору кожного разу. 'pending' одразу при
+  // Salon.create(); 'active' після успішного завершення POST /register;
+  // 'failed' — якщо провіжнінг явно провалився, але автоматичний cleanup
+  // (dropDatabase + видалення цього документа) сам теж не зміг завершитись
+  // — лишається як слід для scripts/reconcileStuckProvisioning.js.
+  provisioningState: { type: String, enum: ['pending', 'active', 'failed'], default: 'pending' },
+
   // Момент СТВОРЕННЯ першого-будь-якого Appointment у tenant-БД цього
   // салону (public чи admin) — для метрик активації/часу-до-першого-
   // бронювання (config/platformRollupJob.js). Проставляється один раз:
