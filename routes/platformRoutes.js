@@ -11,6 +11,7 @@ const { getTenantContext } = require('../config/tenantDb');
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const {
   DEFAULT_TIMEZONE, buildFunnelSummary, buildUsageSummary, summarizeAppointments, buildDailyTrend,
+  buildNorthStarSeries, buildActivationMetrics, buildRetentionCohorts, buildChurnRate,
 } = require('../utils/analyticsAggregation');
 const SalonDailyStat = require('../models/platform/SalonDailyStat');
 
@@ -267,6 +268,40 @@ router.get('/analytics/overview', verifyPlatformAdmin, async (req, res) => {
     res.json({ days, platformTotals, salons: salonSummaries });
   } catch (err) {
     handleRouteError(res, err, 'platform/analytics-overview');
+  }
+});
+
+// GET /api/platform/analytics/startup-metrics — North Star, активація, час
+// до першого бронювання, retention по когортах, churn. Так само, як і
+// /analytics/overview, читає лише SalonDailyStat + кешоване
+// Salon.firstBookingAt — без живого циклу по tenant-БД.
+router.get('/analytics/startup-metrics', verifyPlatformAdmin, async (req, res) => {
+  try {
+    const weeks = Math.min(Math.max(Number(req.query.weeks) || 12, 1), 52);
+    // Достатньо великий запас, щоб покрити і North Star вікно, і
+    // 12-тижневу дозрілість когорт retention.
+    const LOOKBACK_DAYS = 400;
+    const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+    const [salons, stats] = await Promise.all([
+      Salon.find({ isActive: true }).select('provisionedAt createdAt firstBookingAt'),
+      SalonDailyStat.find({ date: { $gte: since } }).select('salon date bookingsPublic bookingsAdmin crmLogins'),
+    ]);
+
+    const statsBySalon = {};
+    stats.forEach((s) => {
+      const key = s.salon.toString();
+      (statsBySalon[key] ||= []).push(s);
+    });
+
+    const northStar = buildNorthStarSeries(statsBySalon, weeks);
+    const { activation, timeToFirstBooking } = buildActivationMetrics(salons);
+    const { cohortTable, retention } = buildRetentionCohorts(salons, statsBySalon);
+    const churn = buildChurnRate(salons, statsBySalon);
+
+    res.json({ northStar, activation, timeToFirstBooking, retention, cohortTable, churn });
+  } catch (err) {
+    handleRouteError(res, err, 'platform/analytics-startup-metrics');
   }
 });
 

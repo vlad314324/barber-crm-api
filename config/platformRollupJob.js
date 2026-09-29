@@ -60,6 +60,18 @@ async function runPlatformRollupTick(targetDate, salonsOverride) {
         },
         { upsert: true }
       );
+
+      // Активація/час-до-першого-бронювання (стартап-метрики) потребують
+      // МОМЕНТ першого-будь-якого запису салону, а не лише вчорашній день
+      // — рахуємо це один раз і кешуємо на Salon.firstBookingAt, замість
+      // окремого живого циклу по tenant-БД. Той самий connection, що й
+      // денний rollup вище, тож зайвих підключень не додає.
+      if (!salon.firstBookingAt) {
+        const firstAppointment = await models.Appointment.findOne().sort({ createdAt: 1 }).select('createdAt');
+        if (firstAppointment) {
+          await Salon.updateOne({ _id: salon._id, firstBookingAt: { $exists: false } }, { $set: { firstBookingAt: firstAppointment.createdAt } });
+        }
+      }
     } catch (err) {
       console.error(`Platform rollup failed for salon ${salon.slug}:`, err);
     }

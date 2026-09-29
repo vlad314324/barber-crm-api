@@ -8,6 +8,14 @@ const salonSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: false },
   provisionedAt: { type: Date },
 
+  // Момент СТВОРЕННЯ першого-будь-якого Appointment у tenant-БД цього
+  // салону (public чи admin) — для метрик активації/часу-до-першого-
+  // бронювання (config/platformRollupJob.js). Проставляється один раз:
+  // нічна rollup-джоба перевіряє це поле лише для салонів, де воно ще
+  // не встановлене, використовуючи вже відкрите з'єднання з денним
+  // rollup'ом, тож не потребує окремого живого циклу по tenant-БД.
+  firstBookingAt: { type: Date },
+
   subscriptionPaidAt: { type: Date },
   subscriptionPeriodDays: { type: Number },
   subscriptionExpiresAt: { type: Date },

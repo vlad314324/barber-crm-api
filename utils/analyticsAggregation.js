@@ -122,6 +122,154 @@ function buildDailyTrend(visits, bookings, days) {
   return trend;
 }
 
+// Понеділок 00:00 UTC тижня, що містить `date` — єдине визначення "тижня"
+// для всіх стартап-метрик нижче (North Star, когорти), щоб цифри були
+// взаємно узгоджені.
+function startOfIsoWeekUTC(date) {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay(); // 0=нд..6=сб
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d;
+}
+
+function median(sortedNumbers) {
+  const n = sortedNumbers.length;
+  if (n === 0) return null;
+  const mid = Math.floor(n / 2);
+  return n % 2 === 0 ? (sortedNumbers[mid - 1] + sortedNumbers[mid]) / 2 : sortedNumbers[mid];
+}
+
+// North Star: бронювання (public + admin — обидва канали, це основна дія
+// продукту) за тиждень, по всій платформі. `statsBySalon` — карта
+// salonId -> SalonDailyStat[] (щоб не питати БД повторно на кожен тиждень).
+function buildNorthStarSeries(statsBySalon, weeks) {
+  const currentWeekStart = startOfIsoWeekUTC(new Date());
+  const series = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const weekStart = new Date(currentWeekStart.getTime() - i * 7 * 24 * 60 * 60 * 1000);
+    const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+    let bookings = 0;
+    Object.values(statsBySalon).forEach((rows) => {
+      rows.forEach((r) => {
+        if (r.date >= weekStart && r.date < weekEnd) bookings += r.bookingsPublic + r.bookingsAdmin;
+      });
+    });
+    series.push({ weekStart: weekStart.toISOString().slice(0, 10), bookings });
+  }
+  return series;
+}
+
+// Активація: частка салонів, чиє ПЕРШЕ-БУДЬ-ЯКЕ бронювання (Salon.
+// firstBookingAt, проставлене rollup-джобою) трапилось протягом
+// `activationWindowDays` від реєстрації (provisionedAt, або createdAt як
+// фолбек для салонів без нього). У знаменник рахуються лише салони, чиє
+// вікно активації вже встигло сплинути — щоб щойно зареєстрований салон
+// не вважався "не активованим" лише тому, що йому ще не минуло 7 днів.
+function buildActivationMetrics(salons, activationWindowDays = 7) {
+  const now = Date.now();
+  const windowMs = activationWindowDays * 24 * 60 * 60 * 1000;
+  let eligible = 0;
+  let activated = 0;
+  const daysToFirstBooking = [];
+
+  salons.forEach((salon) => {
+    const signupAt = salon.provisionedAt || salon.createdAt;
+    if (!signupAt) return;
+    if (signupAt.getTime() + windowMs > now) return; // ще не минуло вікно — не рахуємо
+
+    eligible += 1;
+    if (salon.firstBookingAt) {
+      const days = Math.max(0, (salon.firstBookingAt.getTime() - signupAt.getTime()) / (24 * 60 * 60 * 1000));
+      daysToFirstBooking.push(days);
+      if (days <= activationWindowDays) activated += 1;
+    }
+  });
+
+  daysToFirstBooking.sort((a, b) => a - b);
+  const medianDays = median(daysToFirstBooking);
+
+  return {
+    activation: { activatedCount: activated, eligibleCount: eligible, rate: eligible > 0 ? activated / eligible : null },
+    timeToFirstBooking: { medianDays: medianDays === null ? null : Math.round(medianDays * 10) / 10, sampleSize: daysToFirstBooking.length },
+  };
+}
+
+// Retention по когортах реєстрації: салони групуються за тижнем
+// provisionedAt (останні `cohortWeeksBack` тижнів), і для кожного
+// зсуву `weekOffsets` (1/4/12 тижнів по тому) рахується частка когорти
+// з ХОЧ ОДНИМ бронюванням того тижня. Зсув, чий цільовий тиждень ще не
+// настав, позначається null (когорта ще не "дозріла" для цієї метрики) —
+// а не 0%, щоб не виглядало як реальний відтік.
+function buildRetentionCohorts(salons, statsBySalon, weekOffsets = [1, 4, 12], cohortWeeksBack = 12) {
+  const now = new Date();
+  const currentWeekStart = startOfIsoWeekUTC(now);
+
+  const cohorts = new Map();
+  salons.forEach((salon) => {
+    const signupAt = salon.provisionedAt || salon.createdAt;
+    if (!signupAt) return;
+    const cohortWeekStart = startOfIsoWeekUTC(signupAt);
+    const weeksAgo = Math.round((currentWeekStart.getTime() - cohortWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000));
+    if (weeksAgo < 0 || weeksAgo > cohortWeeksBack) return;
+
+    const key = cohortWeekStart.toISOString();
+    if (!cohorts.has(key)) cohorts.set(key, { weekStart: cohortWeekStart, salonIds: [] });
+    cohorts.get(key).salonIds.push(salon._id.toString());
+  });
+
+  const blended = {};
+  weekOffsets.forEach((w) => { blended[w] = { retained: 0, eligible: 0 }; });
+
+  const cohortTable = [...cohorts.keys()].sort().map((key) => {
+    const { weekStart, salonIds } = cohorts.get(key);
+    const retention = {};
+    weekOffsets.forEach((w) => {
+      const targetWeekStart = new Date(weekStart.getTime() + w * 7 * 24 * 60 * 60 * 1000);
+      const targetWeekEnd = new Date(targetWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+      if (targetWeekStart.getTime() > now.getTime()) {
+        retention[w] = null;
+        return;
+      }
+      const retainedCount = salonIds.filter((sid) => (statsBySalon[sid] || []).some(
+        (r) => r.date >= targetWeekStart && r.date < targetWeekEnd && (r.bookingsPublic + r.bookingsAdmin) > 0
+      )).length;
+      retention[w] = salonIds.length > 0 ? retainedCount / salonIds.length : null;
+      blended[w].retained += retainedCount;
+      blended[w].eligible += salonIds.length;
+    });
+    return { cohortWeekStart: weekStart.toISOString().slice(0, 10), salonCount: salonIds.length, retention };
+  });
+
+  const retention = {};
+  weekOffsets.forEach((w) => { retention[w] = blended[w].eligible > 0 ? blended[w].retained / blended[w].eligible : null; });
+
+  return { cohortTable, retention };
+}
+
+// Churn: частка РАНІШЕ активних салонів (хоч раз було бронювання) без
+// жодного бронювання за останні `recentDays` днів. Навмисно лише
+// бронювання (не логіни) — на відміну від ширшого per-salon churnRisk
+// у /analytics/overview, тут метрика саме про основну дію продукту.
+function buildChurnRate(salons, statsBySalon, recentDays = 30) {
+  const recentSince = new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000);
+  let everActiveCount = 0;
+  let churnedCount = 0;
+
+  salons.forEach((salon) => {
+    const rows = statsBySalon[salon._id.toString()] || [];
+    const everActive = rows.some((r) => r.bookingsPublic + r.bookingsAdmin > 0);
+    if (!everActive) return;
+
+    everActiveCount += 1;
+    const recentBookings = rows
+      .filter((r) => r.date >= recentSince)
+      .reduce((sum, r) => sum + r.bookingsPublic + r.bookingsAdmin, 0);
+    if (recentBookings === 0) churnedCount += 1;
+  });
+
+  return { churnedCount, everActiveCount, rate: everActiveCount > 0 ? churnedCount / everActiveCount : null };
+}
+
 module.exports = {
   DEFAULT_TIMEZONE,
   FUNNEL_STEPS,
@@ -130,4 +278,9 @@ module.exports = {
   buildUsageSummary,
   summarizeAppointments,
   buildDailyTrend,
+  startOfIsoWeekUTC,
+  buildNorthStarSeries,
+  buildActivationMetrics,
+  buildRetentionCohorts,
+  buildChurnRate,
 };
