@@ -25,7 +25,8 @@ router.get('/services', async (req, res) => {
     const payload = rangesEnabled
       ? services
       : services.map((s) => {
-          const obj = s.toObject();
+          // flattenMaps — інакше translations лишається Map і в JSON стає {}
+          const obj = s.toObject({ flattenMaps: true });
           delete obj.priceMax;
           delete obj.durationMax;
           return obj;
