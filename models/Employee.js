@@ -11,7 +11,6 @@ const dayScheduleSchema = new mongoose.Schema({
 const employeeTranslationSchema = new mongoose.Schema({
   bio: { type: String, default: '' },
   specialties: [{ type: String }],
-  customRoleLabel: { type: String, default: '', trim: true },
 }, { _id: false });
 
 const employeeSchema = new mongoose.Schema({
