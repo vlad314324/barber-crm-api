@@ -25,7 +25,8 @@ router.get('/services', async (req, res) => {
     const payload = rangesEnabled
       ? services
       : services.map((s) => {
-          const obj = s.toObject();
+          // flattenMaps — інакше translations лишається Map і в JSON стає {}
+          const obj = s.toObject({ flattenMaps: true });
           delete obj.priceMax;
           delete obj.durationMax;
           return obj;
@@ -66,12 +67,18 @@ router.post('/event', analyticsEventLimiter, async (req, res) => {
 
 // GET /api/:salonSlug/booking/settings — публічний брендинг сторінки бронювання
 router.get('/settings', async (req, res) => {
-  const { Settings } = req.models;
+  const { Settings, Category } = req.models;
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
     const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency } = settings;
-    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency });
+    const bookingGroupByCategory = !!settings.bookingGroupByCategory;
+    // Порядок секцій на сторінці бронювання — порядок створення категорій
+    // (так само їх бачить адмін). Лише назви: самі категорії — admin-only.
+    const serviceCategories = bookingGroupByCategory
+      ? (await Category.find().sort({ createdAt: 1 }).select('name')).map((c) => c.name)
+      : [];
+    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }
