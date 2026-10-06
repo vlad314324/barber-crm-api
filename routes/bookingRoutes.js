@@ -75,10 +75,15 @@ router.get('/settings', async (req, res) => {
     const bookingGroupByCategory = !!settings.bookingGroupByCategory;
     // Порядок секцій на сторінці бронювання — порядок створення категорій
     // (так само їх бачить адмін). Лише назви: самі категорії — admin-only.
-    const serviceCategories = bookingGroupByCategory
-      ? (await Category.find().sort({ createdAt: 1 }).select('name')).map((c) => c.name)
+    const categories = bookingGroupByCategory
+      ? await Category.find().sort({ createdAt: 1 }).select('name translations')
       : [];
-    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories });
+    const serviceCategories = categories.map((c) => c.name);
+    // { [назва категорії]: { [мова]: переклад } } — для заголовків секцій
+    const serviceCategoryTranslations = Object.fromEntries(
+      categories.map((c) => [c.name, Object.fromEntries(c.translations || [])])
+    );
+    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }

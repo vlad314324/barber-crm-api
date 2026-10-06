@@ -14,6 +14,18 @@ const VALID_ICONS = [
 ];
 const resolveIcon = (icon) => (VALID_ICONS.includes(icon) ? icon : 'Sparkles');
 
+// Лише відомі мови і рядкові значення — інше відкидаємо, щоб не зберегти
+// довільні ключі/обʼєкти з тіла запиту. Порожні переклади не зберігаємо.
+const TRANSLATION_LANGS = ['uk', 'en', 'cs', 'pl'];
+const sanitizeTranslations = (input) => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out = {};
+  for (const lang of TRANSLATION_LANGS) {
+    if (typeof input[lang] === 'string' && input[lang].trim()) out[lang] = input[lang].trim();
+  }
+  return out;
+};
+
 // GET /api/:salonSlug/categories
 router.get('/', async (req, res) => {
   const { Category } = req.models;
@@ -37,7 +49,7 @@ router.post('/', async (req, res) => {
     const name = req.body.name.trim();
     const existing = await Category.findOne({ name });
     if (existing) return sendError(res, 400, ERROR_CODES.CATEGORY_NAME_EXISTS, 'Категорія з такою назвою вже існує');
-    const category = await Category.create({ name, icon: resolveIcon(req.body.icon) });
+    const category = await Category.create({ name, icon: resolveIcon(req.body.icon), translations: sanitizeTranslations(req.body.translations) });
     res.status(201).json(category);
   } catch (err) {
     handleRouteError(res, err, 'categories/create');
@@ -63,6 +75,7 @@ router.put('/:id', async (req, res) => {
     const oldName = category.name;
     category.name = name;
     if (req.body.icon !== undefined) category.icon = resolveIcon(req.body.icon);
+    if (req.body.translations !== undefined) category.translations = sanitizeTranslations(req.body.translations);
     await category.save();
 
     if (oldName !== name) {
