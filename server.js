@@ -3,6 +3,7 @@ const app = require('./app');
 const connectDB = require('./config/db');
 const { startReminderJob } = require('./config/reminderJob');
 const { startPlatformRollupJob } = require('./config/platformRollupJob');
+const { startTelegramDailySummaryJob } = require('./config/telegramDailySummaryJob');
 const { closeAllTenantConnections } = require('./config/tenantDb');
 
 const PORT = process.env.PORT || 5000;
@@ -43,6 +44,13 @@ async function main() {
     rollupTask = startPlatformRollupJob();
   }
 
+  let telegramDailySummaryTask = null;
+  if (process.env.DISABLE_TELEGRAM_DAILY_SUMMARY === 'true') {
+    console.log('Telegram daily summary job disabled (DISABLE_TELEGRAM_DAILY_SUMMARY=true)');
+  } else {
+    telegramDailySummaryTask = startTelegramDailySummaryJob();
+  }
+
   const server = app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
   let shuttingDown = false;
@@ -53,6 +61,7 @@ async function main() {
 
     reminderTask?.stop();
     rollupTask?.stop();
+    telegramDailySummaryTask?.stop();
 
     // Безпечна сітка: якщо активні запити/з'єднання ніколи не спорожніють
     // (наприклад, зависле з'єднання клієнта), не висіти вічно — примусово

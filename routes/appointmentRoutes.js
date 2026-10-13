@@ -11,6 +11,7 @@ const {
 } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
+const { notifyUserTelegram } = require('../config/telegramBot');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -307,7 +308,7 @@ router.post('/', async (req, res) => {
 
 // PUT update appointment
 router.put('/:id', async (req, res) => {
-  const { Appointment, Employee } = req.models;
+  const { Appointment, Employee, Client } = req.models;
   // Лише гігієна формату, коли тіло реально чіпає ці поля — CRM свідомо не
   // обмежений графіком роботи при перенесенні запису.
   if (req.body.startTime !== undefined && !TIME_RE.test(req.body.startTime)) {
@@ -339,11 +340,12 @@ router.put('/:id', async (req, res) => {
     const touchesSchedule = ['date', 'startTime', 'employee', 'totalDuration'].some((f) => req.body[f] !== undefined);
     const effectiveStatus = req.body.status !== undefined ? req.body.status : existing.status;
 
-    // Перенесення запису на іншу дату/час зсуває 24-годинне вікно
-    // нагадування — якщо для старого часу нагадування вже надіслано,
-    // скинути прапорець, інакше на новий час воно вже не прийде.
-    if ((req.body.date !== undefined || req.body.startTime !== undefined) && existing.reminderSent) {
-      req.body.reminderSent = false;
+    // Перенесення запису на іншу дату/час зсуває вікна нагадувань (24 год
+    // клієнту, 2 год майстру) — якщо для старого часу нагадування вже
+    // надіслано, скинути прапорці, інакше на новий час вони вже не прийдуть.
+    if (req.body.date !== undefined || req.body.startTime !== undefined) {
+      if (existing.reminderSent) req.body.reminderSent = false;
+      if (existing.employeeReminderSent) req.body.employeeReminderSent = false;
     }
 
     let updated;
@@ -368,6 +370,30 @@ router.put('/:id', async (req, res) => {
       updated = lockResult.appointment;
     } else {
       updated = await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    }
+
+    // На відміну від bookingRoutes.js (публічне бронювання), тут раніше
+    // не було ЖОДНОГО сповіщення майстру при скасуванні/перенесенні —
+    // лише хтось, хто дивиться в CRM, міг про це дізнатись.
+    const justCancelled = existing.status !== 'Cancelled' && updated.status === 'Cancelled';
+    const justRescheduled = !justCancelled && touchesSchedule && (req.body.date !== undefined || req.body.startTime !== undefined);
+    if (justCancelled || justRescheduled) {
+      (async () => {
+        try {
+          const [employeeDoc, clientDoc] = await Promise.all([
+            Employee.findById(updated.employee).select('userId'),
+            Client.findById(updated.client).select('name'),
+          ]);
+          if (!employeeDoc?.userId) return;
+          const when = `${new Date(updated.date).toLocaleDateString('uk-UA')} ${updated.startTime}`;
+          const text = justCancelled
+            ? `❌ Запис скасовано\nКлієнт: ${clientDoc?.name || 'клієнт'}\nБув запланований на: ${when}`
+            : `🔁 Запис перенесено\nКлієнт: ${clientDoc?.name || 'клієнт'}\nНовий час: ${when}`;
+          notifyUserTelegram(employeeDoc.userId, req.tenant.salonId, text);
+        } catch (notifyErr) {
+          console.error('[appointments/update] telegram notify lookup failed:', notifyErr.message);
+        }
+      })();
     }
 
     res.json(updated);

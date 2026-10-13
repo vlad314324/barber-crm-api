@@ -8,6 +8,7 @@ const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
+const { notifyUserTelegram } = require('../config/telegramBot');
 
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
@@ -366,6 +367,14 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       }).catch((mailErr) => {
         console.error('Лист майстру не надіслано:', mailErr.message);
       });
+    }
+
+    if (employee.userId) {
+      const serviceNames = services.map((s) => s.name).join(', ');
+      notifyUserTelegram(
+        employee.userId, req.tenant.salonId,
+        `📅 Новий запис\nКлієнт: ${clientName} (${clientPhone})\nПослуги: ${serviceNames}\nДата: ${date} ${startTime}`
+      );
     }
 
     try {

@@ -25,4 +25,16 @@ function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   return new Date(guess.getTime() + diff);
 }
 
-module.exports = { zonedTimeToUtc };
+// Зворотна операція: якого календарного дня в поясі timeZone відповідає
+// реальний UTC-момент `date`. Потрібно там, де треба знати "яке сьогодні
+// число в салоні" (config/telegramDailySummaryJob.js), а не конвертувати
+// вже відоме локальне число в UTC, як робить zonedTimeToUtc вище.
+function utcInstantToLocalDateParts(date, timeZone) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const parts = Object.fromEntries(dtf.formatToParts(date).map(p => [p.type, p.value]));
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
+module.exports = { zonedTimeToUtc, utcInstantToLocalDateParts };

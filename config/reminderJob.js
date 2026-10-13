@@ -1,10 +1,13 @@
 const cron = require('node-cron');
 const Salon = require('../models/platform/Salon');
+const TelegramLink = require('../models/platform/TelegramLink');
 const { getTenantContext } = require('./tenantDb');
 const { sendReminder } = require('./mailer');
+const { sendTelegramMessage } = require('./telegramBot');
 const { zonedTimeToUtc } = require('../utils/timezone');
 
 const REMINDER_WINDOW_MS = 24 * 60 * 60 * 1000; // рівно 24 години
+const EMPLOYEE_REMINDER_WINDOW_MS = 2 * 60 * 60 * 1000; // рівно 2 години
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
 // Обчислює реальний UTC-момент початку запису з урахуванням часового поясу
@@ -54,6 +57,55 @@ async function runReminderTick(salonsOverride) {
         const start = appointmentStart(apt, timezone);
         return start.getTime() > now && start.getTime() <= horizon.getTime();
       });
+
+      // Нагадування майстру в Telegram за 2 години до початку — окреме
+      // вікно й окремий прапорець (employeeReminderSent) від клієнтського
+      // 24-годинного нагадування вище, у тому самому тіку й для того ж
+      // салону. Весь блок пропускається, якщо бот взагалі не налаштований
+      // (платформний TELEGRAM_BOT_TOKEN), щоб не ретраїти даремно щотіку.
+      if (process.env.TELEGRAM_BOT_TOKEN) {
+        const empHorizon = new Date(now + EMPLOYEE_REMINDER_WINDOW_MS);
+        const empAppointments = await models.Appointment.find({
+          date: { $gte: rangeStart, $lte: rangeEnd },
+          status: 'Scheduled',
+          employeeReminderSent: { $ne: true },
+        })
+          .populate('employee')
+          .populate('client');
+
+        const empDue = empAppointments.filter((apt) => {
+          const start = appointmentStart(apt, timezone);
+          return start.getTime() > now && start.getTime() <= empHorizon.getTime();
+        });
+
+        for (const apt of empDue) {
+          const employee = apt.employee;
+          const client = apt.client;
+          if (!employee?.userId) continue;
+
+          const claimed = await models.Appointment.findOneAndUpdate(
+            { _id: apt._id, employeeReminderSent: { $ne: true } },
+            { $set: { employeeReminderSent: true } }
+          );
+          if (!claimed) continue; // хтось інший уже забрав цей запис
+
+          try {
+            const link = await TelegramLink.findOne({ userId: employee.userId, salonId: salon._id, chatId: { $ne: null } });
+            if (!link) continue; // не прив'язано — нічого надсилати, ретраїти нема сенсу
+
+            await sendTelegramMessage(
+              link.chatId,
+              `⏰ Через 2 години у вас запис\nКлієнт: ${client?.name || 'клієнт'}\nЧас: ${apt.startTime}`
+            );
+            console.log(`[${salon.slug}] Employee 2h reminder sent for appointment ${apt._id}`);
+          } catch (err) {
+            console.error(`[${salon.slug}] Failed to send employee reminder for appointment ${apt._id}:`, err.message);
+            // Та сама логіка, що й для клієнтського нагадування вище —
+            // провал доставки не повинен назавжди "з'їдати" спробу.
+            await models.Appointment.updateOne({ _id: apt._id }, { $set: { employeeReminderSent: false } }).catch(() => {});
+          }
+        }
+      }
 
       if (due.length === 0) continue;
       console.log(`[${salon.slug}] ${due.length} appointment(s) due for a 24h reminder`);

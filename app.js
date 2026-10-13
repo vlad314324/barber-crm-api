@@ -50,6 +50,7 @@ tenantRouter.use('/analytics', verifyToken, require('./routes/analyticsRoutes'))
 
 app.use('/api/salons', require('./routes/salonRoutes'));
 app.use('/api/platform', require('./routes/platformRoutes'));
+app.use('/api/telegram', require('./routes/telegramRoutes'));
 app.use('/api/:salonSlug', tenantRouter);
 
 app.get('/', (req, res) => res.send('BarberCRM API is running'));

@@ -7,6 +7,9 @@ const { loginLimiter, forgotPasswordLimiter, resetPasswordLimiter } = require('.
 const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { sendPasswordResetEmail } = require('../config/mailer');
 const { validatePassword } = require('../utils/password');
+const TelegramLink = require('../models/platform/TelegramLink');
+
+const TELEGRAM_LINK_CODE_TTL_MS = 15 * 60 * 1000;
 
 // POST /api/:salonSlug/auth/register — admin-only: створити логін для співробітника
 router.post('/register', verifyToken, async (req, res) => {
@@ -245,6 +248,52 @@ router.post('/reset-password', resetPasswordLimiter, async (req, res) => {
     res.json({ msg: 'Пароль успішно оновлено' });
   } catch (err) {
     handleRouteError(res, err, 'auth/reset-password');
+  }
+});
+
+// POST /api/:salonSlug/auth/telegram-link-code — самообслуговування: будь-
+// який залогінений (admin чи barber) генерує одноразовий код для прив'язки
+// СВОГО Telegram, той самий паттерн, що й PUT /change-password — ціль
+// береться з req.user.id, а не з тіла запиту. (userId, salonId) —
+// складений unique-індекс на TelegramLink, тож перегенерація коду для вже
+// існуючого запису просто оновлює його, не створюючи дублікат.
+router.post('/telegram-link-code', verifyToken, async (req, res) => {
+  try {
+    const code = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + TELEGRAM_LINK_CODE_TTL_MS);
+    await TelegramLink.findOneAndUpdate(
+      { userId: req.user.id, salonId: req.tenant.salonId },
+      { $set: { code, expiresAt, used: false, dbName: req.tenant.dbName } },
+      { upsert: true }
+    );
+
+    const botUsername = process.env.TELEGRAM_BOT_USERNAME;
+    res.json({
+      code,
+      deepLink: botUsername ? `https://t.me/${botUsername}?start=${code}` : null,
+    });
+  } catch (err) {
+    handleRouteError(res, err, 'auth/telegram-link-code');
+  }
+});
+
+// GET /api/:salonSlug/auth/telegram-status
+router.get('/telegram-status', verifyToken, async (req, res) => {
+  try {
+    const link = await TelegramLink.findOne({ userId: req.user.id, salonId: req.tenant.salonId });
+    res.json({ linked: !!(link && link.chatId) });
+  } catch (err) {
+    handleRouteError(res, err, 'auth/telegram-status');
+  }
+});
+
+// DELETE /api/:salonSlug/auth/telegram-link
+router.delete('/telegram-link', verifyToken, async (req, res) => {
+  try {
+    await TelegramLink.deleteOne({ userId: req.user.id, salonId: req.tenant.salonId });
+    res.json({ msg: 'Telegram відключено' });
+  } catch (err) {
+    handleRouteError(res, err, 'auth/telegram-unlink');
   }
 });
 
