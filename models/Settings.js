@@ -65,6 +65,10 @@ const SettingsSchema = new mongoose.Schema({
     enum: ['minutes', 'hours'],
     default: 'minutes',
   },
+  // Коли увімкнено — публічна сторінка бронювання показує послуги
+  // згрупованими за категоріями у розкривних секціях (зручно, коли послуг
+  // багато). Вимкнено за замовчуванням — плоский список, як і раніше.
+  bookingGroupByCategory: { type: Boolean, default: false },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;

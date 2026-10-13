@@ -26,7 +26,7 @@ router.put('/', requireRole('admin'), async (req, res) => {
     if (!settings) {
       settings = await Settings.create(req.body);
     } else {
-      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, timezone, serviceRangesEnabled, durationDisplayUnit } = req.body;
+      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, timezone, serviceRangesEnabled, durationDisplayUnit, bookingGroupByCategory } = req.body;
       if (shopName !== undefined) settings.shopName = shopName;
       if (address !== undefined) settings.address = address;
       if (phone !== undefined) settings.phone = phone;
@@ -45,6 +45,7 @@ router.put('/', requireRole('admin'), async (req, res) => {
       if (timezone !== undefined) settings.timezone = timezone;
       if (serviceRangesEnabled !== undefined) settings.serviceRangesEnabled = serviceRangesEnabled;
       if (durationDisplayUnit !== undefined) settings.durationDisplayUnit = durationDisplayUnit;
+      if (bookingGroupByCategory !== undefined) settings.bookingGroupByCategory = !!bookingGroupByCategory;
       await settings.save();
     }
     res.json(settings);
