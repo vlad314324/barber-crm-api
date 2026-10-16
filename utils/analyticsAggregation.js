@@ -122,6 +122,44 @@ function buildDailyTrend(visits, bookings, days) {
   return trend;
 }
 
+// Воронка публічної сторінки бронювання одного салону за останні `days`
+// днів: скільки дійшло до кожного кроку, звідки прийшли, денний тренд.
+// Спільна для платформного адміна (routes/platformRoutes.js) і власника
+// салону (routes/analyticsRoutes.js).
+async function computeFunnelAnalytics(models, days) {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const [events, bookings] = await Promise.all([
+    models.AnalyticsEvent.find({ createdAt: { $gte: since } }).select('event sessionId visitorId utmSource referrer createdAt'),
+    models.Appointment.find({ source: 'public', createdAt: { $gte: since } }).select('createdAt'),
+  ]);
+
+  const { funnel, submitFailedCount, uniqueVisitors, sourceBreakdown } = buildFunnelSummary(events);
+  const totalVisits = funnel.find((f) => f.event === 'page_view')?.count || 0;
+  const totalBookings = bookings.length;
+
+  // Тренд-графік лишаємо компактним (макс. 30 днів), навіть коли саме
+  // вікно агрегації (`days`) ширше.
+  const trendDays = Math.min(days, 30);
+  const pageViewEvents = events.filter((e) => e.event === 'page_view');
+  const dailyTrend = buildDailyTrend(pageViewEvents, bookings, trendDays);
+
+  return {
+    days,
+    totalVisits,
+    uniqueVisitors,
+    totalBookings,
+    conversionRate: totalVisits > 0 ? totalBookings / totalVisits : 0,
+    funnel,
+    submitFailedCount,
+    sourceBreakdown,
+    dailyTrend,
+  };
+}
+
+function parseFunnelDays(raw) {
+  return Math.min(Math.max(Number(raw) || 30, 1), 365);
+}
+
 // Понеділок 00:00 UTC тижня, що містить `date` — єдине визначення "тижня"
 // для всіх стартап-метрик нижче (North Star, когорти), щоб цифри були
 // взаємно узгоджені.
@@ -271,6 +309,7 @@ function buildChurnRate(salons, statsBySalon, recentDays = 30) {
 }
 
 module.exports = {
+  computeFunnelAnalytics, parseFunnelDays,
   DEFAULT_TIMEZONE,
   FUNNEL_STEPS,
   extractReferrerHost,

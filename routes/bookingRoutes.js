@@ -40,9 +40,8 @@ router.get('/services', async (req, res) => {
 
 // POST /api/:salonSlug/booking/event — крок воронки публічної сторінки
 // бронювання (відкриття, вибір майстра/послуги/часу, введення контактів,
-// підсумок бронювання). Бачить це лише platform-admin — власник салону й
-// майстри в tenant-CRM доступу до цих даних не мають (окрема автентифікація,
-// див. routes/platformRoutes.js). Best-effort: фронтенд шле fire-and-forget,
+// підсумок бронювання). Агреговано бачать platform-admin і адмін салону
+// (Звіти, GET /analytics/funnel); сирі події назовні не віддаються. Best-effort: фронтенд шле fire-and-forget,
 // невалідний `event` просто ігнорується без шуму в консолі клієнта.
 router.post('/event', analyticsEventLimiter, async (req, res) => {
   const { event, visitorId, sessionId, utmSource, utmMedium, utmCampaign, referrer, meta } = req.body;

@@ -12,7 +12,7 @@ const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRo
 const { validatePassword } = require('../utils/password');
 const { platformLoginLimiter, platformAdminCreateLimiter } = require('../middleware/rateLimit');
 const {
-  DEFAULT_TIMEZONE, buildFunnelSummary, buildUsageSummary, summarizeAppointments, buildDailyTrend,
+  DEFAULT_TIMEZONE, computeFunnelAnalytics, parseFunnelDays, buildUsageSummary, summarizeAppointments,
   buildNorthStarSeries, buildActivationMetrics, buildRetentionCohorts, buildChurnRate,
 } = require('../utils/analyticsAggregation');
 const SalonDailyStat = require('../models/platform/SalonDailyStat');
@@ -122,43 +122,14 @@ router.get('/salons', verifyPlatformAdmin, async (req, res) => {
 
 // GET /api/platform/salons/:id/analytics/funnel — воронка публічної
 // сторінки бронювання цього салону: скільки дійшло до кожного кроку,
-// звідки прийшли, денний тренд переходів/бронювань. Ці роути — платформна
-// аналітика, недоступна власнику салону (лише verifyPlatformAdmin).
+// звідки прийшли, денний тренд переходів/бронювань. Ті самі дані власник
+// салону бачить у своїх Звітах (GET /:salonSlug/analytics/funnel).
 router.get('/salons/:id/analytics/funnel', verifyPlatformAdmin, async (req, res) => {
   try {
     const salon = await Salon.findById(req.params.id);
     if (!salon) return sendError(res, 404, ERROR_CODES.SALON_NOT_FOUND, 'Салон не знайдено');
-
-    const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
     const { models } = await getTenantContext(salon.dbName);
-    const [events, bookings] = await Promise.all([
-      models.AnalyticsEvent.find({ createdAt: { $gte: since } }).select('event sessionId visitorId utmSource referrer createdAt'),
-      models.Appointment.find({ source: 'public', createdAt: { $gte: since } }).select('createdAt'),
-    ]);
-
-    const { funnel, submitFailedCount, uniqueVisitors, sourceBreakdown } = buildFunnelSummary(events);
-    const totalVisits = funnel.find((f) => f.event === 'page_view')?.count || 0;
-    const totalBookings = bookings.length;
-
-    // Тренд-графік лишаємо компактним (макс. 30 днів на барах), навіть
-    // коли саме вікно агрегації (`days`) ширше.
-    const trendDays = Math.min(days, 30);
-    const pageViewEvents = events.filter((e) => e.event === 'page_view');
-    const dailyTrend = buildDailyTrend(pageViewEvents, bookings, trendDays);
-
-    res.json({
-      days,
-      totalVisits,
-      uniqueVisitors,
-      totalBookings,
-      conversionRate: totalVisits > 0 ? totalBookings / totalVisits : 0,
-      funnel,
-      submitFailedCount,
-      sourceBreakdown,
-      dailyTrend,
-    });
+    res.json(await computeFunnelAnalytics(models, parseFunnelDays(req.query.days)));
   } catch (err) {
     handleRouteError(res, err, 'platform/salons-funnel-analytics');
   }

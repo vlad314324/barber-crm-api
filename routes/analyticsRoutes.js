@@ -2,9 +2,20 @@ const express = require('express');
 const router = express.Router();
 const { handleRouteError } = require('../utils/errorCodes');
 const requireRole = require('../middleware/requireRole');
+const { computeFunnelAnalytics, parseFunnelDays } = require('../utils/analyticsAggregation');
 
 // Використовується лише на admin-only сторінці Reports.tsx.
 router.use(requireRole('admin'));
+
+// GET /api/:salonSlug/analytics/funnel?days=30 — воронка публічної сторінки
+// бронювання цього салону (та сама, що бачить платформний адмін).
+router.get('/funnel', async (req, res) => {
+  try {
+    res.json(await computeFunnelAnalytics(req.models, parseFunnelDays(req.query.days)));
+  } catch (err) {
+    handleRouteError(res, err, 'analytics/funnel');
+  }
+});
 
 // GET /api/:salonSlug/analytics/dashboard
 router.get('/dashboard', async (req, res) => {
@@ -74,6 +85,18 @@ router.get('/dashboard', async (req, res) => {
       };
     });
 
+    // Завантаженість по днях тижня (виконані записи), 0 = понеділок.
+    // date зберігається як північ UTC календарного дня запису.
+    const appointmentsByWeekday = new Array(7).fill(0);
+    allAppts.forEach(a => {
+      appointmentsByWeekday[(new Date(a.date).getUTCDay() + 6) % 7] += 1;
+    });
+
+    // Статуси всіх записів (не лише виконаних) — частка скасувань/неявок.
+    const statusRows = await Appointment.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+    const appointmentsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0 };
+    statusRows.forEach(r => { if (appointmentsByStatus[r._id] !== undefined) appointmentsByStatus[r._id] = r.count; });
+
     res.json({
       totalRevenue: allAppts.reduce((s, a) => s + a.totalPrice, 0),
       monthRevenue,
@@ -85,6 +108,8 @@ router.get('/dashboard', async (req, res) => {
       revenueByMonth,
       servicePerformance,
       empPerformance: empPerformance.sort((a, b) => b.revenue - a.revenue),
+      appointmentsByWeekday,
+      appointmentsByStatus,
     });
   } catch (err) {
     handleRouteError(res, err, 'analytics/dashboard');
