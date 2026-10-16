@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const Salon = require('../models/platform/Salon');
 const TelegramLink = require('../models/platform/TelegramLink');
 const { getTenantContext } = require('./tenantDb');
-const { sendReminder } = require('./mailer');
+const { sendReminder, formatEmailDate } = require('./mailer');
 const { sendTelegramMessage } = require('./telegramBot');
 const { zonedTimeToUtc } = require('../utils/timezone');
 
@@ -132,7 +132,7 @@ async function runReminderTick(salonsOverride) {
             clientEmail: client.email,
             clientName: client.name,
             employeeName: employee?.name || 'Майстер',
-            date: new Date(apt.date).toLocaleDateString(apt.preferredLang === 'en' ? 'en-US' : 'uk-UA'),
+            date: formatEmailDate(apt.date, apt.preferredLang),
             startTime: apt.startTime,
             lang: apt.preferredLang,
             shopName: settings?.shopName,

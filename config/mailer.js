@@ -75,7 +75,7 @@ const TEMPLATES = {
     subjectTitle: 'Booking confirmation',
     greeting: (name) => `Hi, ${name}!`,
     intro: 'Your appointment has been confirmed. Details below:',
-    rowEmployee: 'Barber',
+    rowEmployee: 'Specialist',
     rowDate: 'Date',
     rowTime: 'Time',
     rowDuration: 'Duration',
@@ -87,6 +87,40 @@ const TEMPLATES = {
     footerNote: 'If you need to reschedule or cancel your appointment, please contact us in advance.',
     footerCopy: 'Thanks for choosing us!',
     subject: (date, startTime) => `✂️ Booking confirmed for ${date} at ${startTime}`,
+  },
+  cs: {
+    subjectTitle: 'Potvrzení rezervace',
+    greeting: (name) => `Dobrý den, ${name}!`,
+    intro: 'Vaše rezervace byla úspěšně potvrzena. Podrobnosti níže:',
+    rowEmployee: 'Specialista',
+    rowDate: 'Datum',
+    rowTime: 'Čas',
+    rowDuration: 'Délka',
+    minutesLabel: 'min',
+    hoursLabel: 'h',
+    servicesLabel: 'Služby:',
+    totalLabel: 'Celkem k úhradě: ',
+    calendarButton: 'Přidat do Google Kalendáře',
+    footerNote: 'Pokud potřebujete termín přesunout nebo zrušit, kontaktujte nás prosím předem.',
+    footerCopy: 'Děkujeme, že jste si nás vybrali!',
+    subject: (date, startTime) => `✂️ Potvrzení rezervace na ${date} v ${startTime}`,
+  },
+  pl: {
+    subjectTitle: 'Potwierdzenie rezerwacji',
+    greeting: (name) => `Dzień dobry, ${name}!`,
+    intro: 'Twoja rezerwacja została potwierdzona. Szczegóły poniżej:',
+    rowEmployee: 'Specjalista',
+    rowDate: 'Data',
+    rowTime: 'Godzina',
+    rowDuration: 'Czas trwania',
+    minutesLabel: 'min',
+    hoursLabel: 'godz.',
+    servicesLabel: 'Usługi:',
+    totalLabel: 'Do zapłaty: ',
+    calendarButton: 'Dodaj do Kalendarza Google',
+    footerNote: 'Jeśli chcesz przełożyć lub odwołać wizytę, skontaktuj się z nami wcześniej.',
+    footerCopy: 'Dziękujemy za wybór!',
+    subject: (date, startTime) => `✂️ Potwierdzenie rezerwacji na ${date} o ${startTime}`,
   },
 };
 
@@ -109,12 +143,34 @@ const REMINDER_TEMPLATES = {
     headerTitle: 'Appointment reminder',
     greeting: (name) => `Hi, ${name}!`,
     intro: (shopName) => shopName ? `This is a reminder that you have an appointment at ${shopName} tomorrow:` : 'This is a reminder that you have an appointment tomorrow:',
-    rowEmployee: 'Barber',
+    rowEmployee: 'Specialist',
     rowDate: 'Date',
     rowTime: 'Time',
     footerNote: 'If you need to reschedule or cancel your appointment, please contact us in advance.',
     footerCopy: 'See you soon!',
     subject: (startTime) => `✂️ Reminder: appointment tomorrow at ${startTime}`,
+  },
+  cs: {
+    headerTitle: 'Připomínka rezervace',
+    greeting: (name) => `Dobrý den, ${name}!`,
+    intro: (shopName) => shopName ? `Připomínáme, že zítra máte rezervaci v ${shopName}:` : 'Připomínáme, že zítra máte rezervaci:',
+    rowEmployee: 'Specialista',
+    rowDate: 'Datum',
+    rowTime: 'Čas',
+    footerNote: 'Pokud potřebujete termín přesunout nebo zrušit, kontaktujte nás prosím předem.',
+    footerCopy: 'Těšíme se na vás!',
+    subject: (startTime) => `✂️ Připomínka: rezervace zítra v ${startTime}`,
+  },
+  pl: {
+    headerTitle: 'Przypomnienie o wizycie',
+    greeting: (name) => `Dzień dobry, ${name}!`,
+    intro: (shopName) => shopName ? `Przypominamy, że jutro masz wizytę w ${shopName}:` : 'Przypominamy, że jutro masz wizytę:',
+    rowEmployee: 'Specjalista',
+    rowDate: 'Data',
+    rowTime: 'Godzina',
+    footerNote: 'Jeśli chcesz przełożyć lub odwołać wizytę, skontaktuj się z nami wcześniej.',
+    footerCopy: 'Do zobaczenia!',
+    subject: (startTime) => `✂️ Przypomnienie: wizyta jutro o ${startTime}`,
   },
 };
 
@@ -172,9 +228,26 @@ const EMPLOYEE_NOTIFICATION_TEMPLATE = {
 
 const resolveTemplate = (lang) => TEMPLATES[lang] || TEMPLATES.uk;
 
-const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, services, date, startTime, totalPrice, totalPriceMax, totalDuration, totalDurationMin, lang, currency, rangesEnabled }) => {
+// Мови листів клієнту = мови публічної сторінки бронювання.
+const EMAIL_LOCALES = { uk: 'uk-UA', en: 'en-US', cs: 'cs-CZ', pl: 'pl-PL' };
+
+// "пт, 23 жовтня 2026 р." / "Fri, October 23, 2026" / "pá 23. října 2026" —
+// календарна дата мовою клієнта. UTC, бо дата запису — це календарний
+// день (північ UTC), а не момент часу.
+const formatEmailDate = (date, lang) => {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return String(date);
+  return d.toLocaleDateString(EMAIL_LOCALES[lang] || EMAIL_LOCALES.uk, {
+    weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+  });
+};
+
+// Збирає тему й HTML листа-підтвердження (без відправки) — окремо, щоб
+// мовні шаблони можна було перевірити тестом.
+const buildBookingConfirmation = ({ clientName, employeeName, services, date, startTime, totalPrice, totalPriceMax, totalDuration, totalDurationMin, lang, currency, rangesEnabled }) => {
   const currencyLabel = currencySymbol(currency);
   const t = resolveTemplate(lang);
+  const dateLabel = formatEmailDate(date, lang);
   const serviceList = services.map(s => {
     const priceText = rangesEnabled ? formatRange(s.price, s.priceMax) : String(s.price);
     const durationText = formatDurationRange(s.duration, rangesEnabled ? s.durationMax : undefined, t);
@@ -202,7 +275,7 @@ const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, 
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">${t.rowDate}</td>
-              <td style="padding: 8px 0; font-weight: 600; text-align: right;">${date}</td>
+              <td style="padding: 8px 0; font-weight: 600; text-align: right;">${dateLabel}</td>
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">${t.rowTime}</td>
@@ -240,11 +313,12 @@ const sendBookingConfirmation = async ({ clientEmail, clientName, employeeName, 
     </div>
   `;
 
-  await sendMail({
-    to: clientEmail,
-    subject: t.subject(date, startTime),
-    html,
-  });
+  return { subject: t.subject(dateLabel, startTime), html };
+};
+
+const sendBookingConfirmation = async ({ clientEmail, ...params }) => {
+  const { subject, html } = buildBookingConfirmation(params);
+  await sendMail({ to: clientEmail, subject, html });
 };
 
 const sendEmployeeBookingNotification = async ({ employeeEmail, employeeName, clientName, clientPhone, services, date, startTime, totalPrice, totalPriceMax, totalDuration, totalDurationMin, currency, rangesEnabled }) => {
@@ -417,4 +491,7 @@ const sendSalonDeactivatedEmail = async ({ email, ownerName, salonName, reason }
   });
 };
 
-module.exports = { sendBookingConfirmation, sendEmployeeBookingNotification, sendReminder, sendPasswordResetEmail, sendSalonDeactivatedEmail };
+module.exports = {
+  sendBookingConfirmation, sendEmployeeBookingNotification, sendReminder, sendPasswordResetEmail, sendSalonDeactivatedEmail,
+  buildBookingConfirmation, formatEmailDate, EMAIL_LANGS: Object.keys(EMAIL_LOCALES),
+};

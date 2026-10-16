@@ -1,5 +1,5 @@
 const express = require('express');
-const { sendBookingConfirmation, sendEmployeeBookingNotification } = require('../config/mailer');
+const { sendBookingConfirmation, sendEmployeeBookingNotification, EMAIL_LANGS } = require('../config/mailer');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
@@ -226,7 +226,9 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
   }
 
-  const preferredLang = lang === 'en' ? 'en' : 'uk';
+  // Мова клієнта = мова, якою він бронював на сторінці; якщо не передана
+  // чи невідома — визначимо нижче за мовою салону за замовчуванням.
+  let preferredLang = EMAIL_LANGS.includes(lang) ? lang : null;
 
   // Необов'язковий Idempotency-Key: коли переданий, повторний запит із тим
   // самим ключем (втрачена мережею відповідь, подвійний клік) повертає ту
@@ -257,6 +259,9 @@ router.post('/', publicBookingLimiter, async (req, res) => {
 
     const settings = await Settings.findOne();
     const rangesEnabled = !!settings?.serviceRangesEnabled;
+    if (!preferredLang) {
+      preferredLang = EMAIL_LANGS.includes(settings?.defaultBookingLanguage) ? settings.defaultBookingLanguage : 'uk';
+    }
 
     // Публічний ендпоінт — послуга, вимкнена з каталогу (isAvailable:false),
     // не повинна бути бронювальною напряму через API, навіть якщо її ще не
@@ -342,7 +347,12 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       clientEmail,
       clientName,
       employeeName: employee?.name || 'Майстер',
-      services,
+      // Назви послуг — перекладом мовою клієнта (як на сторінці бронювання),
+      // якщо салон його задав; інакше базова назва.
+      services: services.map((s) => ({
+        name: s.translations?.get?.(preferredLang)?.name?.trim() || s.name,
+        price: s.price, priceMax: s.priceMax, duration: s.duration, durationMax: s.durationMax,
+      })),
       date,
       startTime,
       totalPrice,
