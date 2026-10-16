@@ -68,6 +68,16 @@ const serviceSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // Фото послуги в R2. Пишуться лише через POST/DELETE /services/:id/image —
+  // звичайні create/update ці поля ігнорують. imageKey — внутрішній ключ
+  // об'єкта в бакеті (для видалення), назовні не віддається.
+  imageUrl: {
+    type: String,
+  },
+  imageKey: {
+    type: String,
+    select: false,
+  },
 });
 
 module.exports = serviceSchema;

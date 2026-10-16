@@ -5,8 +5,23 @@ const {
   buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber,
   resolveAlias, CATEGORY_ALIASES, MAX_IMPORT_ROWS,
 } = require('../utils/excel');
-const { importUpload } = require('../middleware/upload');
+const crypto = require('crypto');
+const sharp = require('sharp');
+const { importUpload, imageUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
+const storage = require('../utils/storage');
+
+// Фото пишуться лише через /:id/image, щоб через create/update не можна
+// було підставити довільний URL чи чужий ключ бакета.
+function stripImageFields(body) {
+  delete body.imageUrl;
+  delete body.imageKey;
+}
+
+// Квадратна мініатюра: фронтенд уже кадрує 1:1, але fit:'cover' страхує
+// прямі виклики API. rotate() без аргументів застосовує EXIF-орієнтацію
+// з фото з телефона (і sharp при цьому прибирає EXIF, разом із GPS).
+const SERVICE_IMAGE_SIZE = 600;
 
 const SERVICE_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -165,6 +180,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
     const settings = await Settings.findOne();
     const body = { ...req.body };
+    stripImageFields(body);
     if (!settings?.serviceRangesEnabled) {
       // Опція вимкнена — priceMax/durationMax ігноруємо, навіть якщо їх
       // передали напряму через API в обхід форми.
@@ -197,6 +213,7 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
 
     const settings = await Settings.findOne();
     const body = { ...req.body };
+    stripImageFields(body);
     if (!settings?.serviceRangesEnabled) {
       delete body.priceMax;
       delete body.durationMax;
@@ -228,7 +245,7 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
 router.delete('/:id', requireRole('admin'), async (req, res) => {
   const { Service, Appointment } = req.models;
   try {
-    const service = await Service.findById(req.params.id);
+    const service = await Service.findById(req.params.id).select('+imageKey');
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
 
     // Hard delete лишав би `Appointment.services` з посиланням на
@@ -243,9 +260,63 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     }
 
     await service.deleteOne();
+    await storage.deleteObject(service.imageKey);
     res.json({ msg: 'Послугу видалено' });
   } catch (err) {
     handleRouteError(res, err, 'services/delete');
+  }
+});
+
+// POST /services/:id/image — multipart, поле "image". Замінює попереднє фото.
+router.post('/:id/image', requireRole('admin'), imageUpload('image'), async (req, res) => {
+  const { Service } = req.models;
+  if (!storage.isStorageConfigured()) {
+    return sendError(res, 503, ERROR_CODES.IMAGE_STORAGE_NOT_CONFIGURED, 'Сховище зображень не налаштоване');
+  }
+  try {
+    const service = await Service.findById(req.params.id).select('+imageKey');
+    if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
+
+    let buffer;
+    try {
+      buffer = await sharp(req.file.buffer)
+        .rotate()
+        .resize(SERVICE_IMAGE_SIZE, SERVICE_IMAGE_SIZE, { fit: 'cover' })
+        .webp({ quality: 80 })
+        .toBuffer();
+    } catch (err) {
+      return sendError(res, 400, ERROR_CODES.IMAGE_INVALID_FILE_TYPE, 'Не вдалося прочитати зображення');
+    }
+
+    const key = `salons/${req.tenant.salonId}/services/${service._id}/${crypto.randomUUID()}.webp`;
+    await storage.putObject(key, buffer, 'image/webp');
+
+    // Точковий $set замість service.save(): повна валідація документа
+    // не повинна блокувати фото через давні дані в інших полях.
+    const updated = await Service.findByIdAndUpdate(
+      service._id, { $set: { imageUrl: storage.publicUrl(key), imageKey: key } }, { new: true }
+    );
+    await storage.deleteObject(service.imageKey);
+    res.json(updated);
+  } catch (err) {
+    handleRouteError(res, err, 'services/image-upload');
+  }
+});
+
+// DELETE /services/:id/image
+router.delete('/:id/image', requireRole('admin'), async (req, res) => {
+  const { Service } = req.models;
+  try {
+    const service = await Service.findById(req.params.id).select('+imageKey');
+    if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
+
+    const updated = await Service.findByIdAndUpdate(
+      service._id, { $unset: { imageUrl: 1, imageKey: 1 } }, { new: true }
+    );
+    await storage.deleteObject(service.imageKey);
+    res.json(updated);
+  } catch (err) {
+    handleRouteError(res, err, 'services/image-delete');
   }
 });
 

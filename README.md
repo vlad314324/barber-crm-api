@@ -41,6 +41,10 @@ This starts the server with nodemon on port `5000` (or `PORT`).
 | `PORT` | no | HTTP port (default `5000`). |
 | `DISABLE_REMINDER_JOB` | no | Set to `true` to skip the 24h appointment reminder cron. |
 | `DISABLE_PLATFORM_ROLLUP_JOB` | no | Set to `true` to skip the nightly platform-analytics rollup cron. |
+| `R2_ACCOUNT_ID` | for service photos | Cloudflare account ID (R2 S3 endpoint `https://<id>.r2.cloudflarestorage.com`). |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | for service photos | R2 API token with Object Read & Write on the bucket. |
+| `R2_BUCKET` | for service photos | R2 bucket name. |
+| `R2_PUBLIC_URL` | for service photos | Public base URL of the bucket (r2.dev or custom domain), no trailing slash. Without all five R2 vars the image endpoints return `IMAGE_STORAGE_NOT_CONFIGURED`. |
 
 Example `.env`:
 
@@ -54,6 +58,11 @@ BREVO_API_KEY=
 FRONTEND_URL=http://localhost:5173
 PORT=5000
 # DISABLE_REMINDER_JOB=true
+# R2_ACCOUNT_ID=
+# R2_ACCESS_KEY_ID=
+# R2_SECRET_ACCESS_KEY=
+# R2_BUCKET=hirnix-media
+# R2_PUBLIC_URL=https://media.example.com
 ```
 
 ## Architecture
