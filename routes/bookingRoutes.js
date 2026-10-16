@@ -3,7 +3,8 @@ const { sendBookingConfirmation, sendEmployeeBookingNotification } = require('..
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
-const { hasOverlap } = require('../utils/appointmentOverlap');
+const { findScheduleConflict } = require('../utils/appointmentOverlap');
+const { breakIntervals } = require('../utils/breaks');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
@@ -171,21 +172,19 @@ router.get('/available-slots', async (req, res) => {
       allSlots.push(`${h}:${m}`);
     }
 
-    // Відфільтровуємо зайняті слоти
-    const bookedSlots = new Set();
-    existing.forEach(apt => {
+    // Зайнятий час: записи + перерви майстра — однаково блокують слоти.
+    const blocked = existing.map(apt => {
       const [h, m] = apt.startTime.split(':').map(Number);
-      const startMin = h * 60 + m;
-      const duration = apt.totalDuration || 30;
-      for (let i = 0; i < duration; i += 30) {
-        const totalMin = startMin + i;
-        const bh = String(Math.floor(totalMin / 60)).padStart(2, '0');
-        const bm = String(totalMin % 60).padStart(2, '0');
-        bookedSlots.add(`${bh}:${bm}`);
-      }
-    });
+      const start = h * 60 + m;
+      return { start, end: start + (apt.totalDuration || 30) };
+    }).concat(await breakIntervals(req.models, employeeId, date));
 
-    let availableSlots = allSlots.filter(slot => !bookedSlots.has(slot));
+    // Слот недоступний, якщо його початок потрапляє в зайнятий інтервал.
+    let availableSlots = allSlots.filter(slot => {
+      const [h, m] = slot.split(':').map(Number);
+      const slotStart = h * 60 + m;
+      return !blocked.some(b => slotStart >= b.start && slotStart < b.end);
+    });
 
     if (requiredDuration) {
       availableSlots = availableSlots.filter(slot => {
@@ -193,12 +192,7 @@ router.get('/available-slots', async (req, res) => {
         const slotStart = h * 60 + m;
         const slotEnd = slotStart + requiredDuration;
         if (slotEnd > toMinutes) return false; // запис не влазить у робочий день
-        return !existing.some(apt => {
-          const [ah, am] = apt.startTime.split(':').map(Number);
-          const aptStart = ah * 60 + am;
-          const aptEnd = aptStart + (apt.totalDuration || 30);
-          return slotStart < aptEnd && aptStart < slotEnd;
-        });
+        return !blocked.some(b => slotStart < b.end && b.start < slotEnd);
       });
     }
 
@@ -316,9 +310,8 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     // перекриття й створення запису відбуваються без гонки з паралельним
     // запитом на той самий час (публічним чи адмінським — той самий лок).
     const lockResult = await withEmployeeDayLock(req.models, employeeId, date, async () => {
-      if (await hasOverlap(req.models, { employeeId, dateObj, startTime, totalDuration })) {
-        return { conflict: true };
-      }
+      const conflict = await findScheduleConflict(req.models, { employeeId, dateObj, startTime, totalDuration });
+      if (conflict) return { conflict };
       const created = await Appointment.create({
         client: client._id,
         employee: employeeId,
@@ -331,9 +324,12 @@ router.post('/', publicBookingLimiter, async (req, res) => {
         preferredLang,
         source: 'public',
       });
-      return { conflict: false, appointment: created };
+      return { conflict: null, appointment: created };
     });
 
+    if (lockResult.conflict === 'break') {
+      return sendError(res, 409, ERROR_CODES.EMPLOYEE_ON_BREAK, 'У майстра перерва в цей час, оберіть інший слот');
+    }
     if (lockResult.conflict) {
       return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
     }

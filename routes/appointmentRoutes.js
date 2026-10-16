@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
-const { hasOverlap } = require('../utils/appointmentOverlap');
+const { findScheduleConflict } = require('../utils/appointmentOverlap');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate } = require('../utils/scheduleWindow');
 const {
@@ -212,13 +212,14 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
         await writeRow();
       } else {
         const conflict = await withEmployeeDayLock(req.models, employee._id, dateValue, async () => {
-          const overlap = await hasOverlap(req.models, {
+          const overlap = await findScheduleConflict(req.models, {
             employeeId: employee._id, dateObj: dateValue, startTime, totalDuration,
             excludeAppointmentId: id || undefined,
           });
           if (!overlap) await writeRow();
           return overlap;
         });
+        if (conflict === 'break') throw new Error('У майстра перерва в цей час');
         if (conflict) throw new Error('Цей час уже зайнято іншим записом');
       }
     } catch (err) {
@@ -286,11 +287,13 @@ router.post('/', async (req, res) => {
       saved = await create();
     } else {
       const lockResult = await withEmployeeDayLock(req.models, employee, date, async () => {
-        if (await hasOverlap(req.models, { employeeId: employee, dateObj: new Date(date), startTime, totalDuration })) {
-          return { conflict: true };
-        }
-        return { conflict: false, appointment: await create() };
+        const conflict = await findScheduleConflict(req.models, { employeeId: employee, dateObj: new Date(date), startTime, totalDuration });
+        if (conflict) return { conflict };
+        return { conflict: null, appointment: await create() };
       });
+      if (lockResult.conflict === 'break') {
+        return sendError(res, 409, ERROR_CODES.EMPLOYEE_ON_BREAK, 'У майстра перерва в цей час, оберіть інший слот');
+      }
       if (lockResult.conflict) {
         return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
       }
@@ -356,14 +359,17 @@ router.put('/:id', async (req, res) => {
       const effectiveDuration = req.body.totalDuration ?? existing.totalDuration;
 
       const lockResult = await withEmployeeDayLock(req.models, effectiveEmployeeId, effectiveDate, async () => {
-        const conflict = await hasOverlap(req.models, {
+        const conflict = await findScheduleConflict(req.models, {
           employeeId: effectiveEmployeeId, dateObj: new Date(effectiveDate),
           startTime: effectiveStartTime, totalDuration: effectiveDuration,
           excludeAppointmentId: req.params.id,
         });
-        if (conflict) return { conflict: true };
-        return { conflict: false, appointment: await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }) };
+        if (conflict) return { conflict };
+        return { conflict: null, appointment: await Appointment.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }) };
       });
+      if (lockResult.conflict === 'break') {
+        return sendError(res, 409, ERROR_CODES.EMPLOYEE_ON_BREAK, 'У майстра перерва в цей час, оберіть інший слот');
+      }
       if (lockResult.conflict) {
         return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
       }

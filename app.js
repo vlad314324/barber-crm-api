@@ -47,6 +47,7 @@ tenantRouter.use('/booking', require('./routes/bookingRoutes'));
 tenantRouter.use('/settings', verifyToken, require('./routes/settingsRoutes'));
 tenantRouter.use('/notifications', verifyToken, require('./routes/notificationRoutes'));
 tenantRouter.use('/analytics', verifyToken, require('./routes/analyticsRoutes'));
+tenantRouter.use('/breaks', verifyToken, require('./routes/breakRoutes'));
 
 app.use('/api/salons', require('./routes/salonRoutes'));
 app.use('/api/platform', require('./routes/platformRoutes'));

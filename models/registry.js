@@ -11,8 +11,9 @@ const AppointmentLock = require('./AppointmentLock');
 const AnalyticsEvent = require('./AnalyticsEvent');
 const CrmSession = require('./CrmSession');
 const IdempotencyKey = require('./IdempotencyKey');
+const EmployeeBreak = require('./EmployeeBreak');
 
-const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession, IdempotencyKey };
+const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession, IdempotencyKey, EmployeeBreak };
 
 function getModels(connection) {
   const models = {};

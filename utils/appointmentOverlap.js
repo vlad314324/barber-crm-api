@@ -6,6 +6,8 @@
 // Нормалізує довільний вхідний `date` (рядок чи Date) у ключ "YYYY-MM-DD"
 // для лока (utils/appointmentLock.js) — важливо, щоб той самий день завжди
 // давав той самий ключ незалежно від формату, у якому прийшла дата.
+const { breakIntervals } = require('./breaks');
+
 function dateKey(date) {
   return new Date(date).toISOString().slice(0, 10);
 }
@@ -40,4 +42,19 @@ async function hasOverlap(models, { employeeId, dateObj, startTime, totalDuratio
   });
 }
 
-module.exports = { dateKey, hasOverlap };
+// Що саме заважає інтервалу [startTime, startTime+totalDuration):
+// 'appointment' — інший нескасований запис, 'break' — перерва майстра,
+// null — час вільний. Єдина перевірка для всіх шляхів запису (публічне
+// бронювання, адмінське створення/перенесення, імпорт), щоб перерви
+// закривали час однаково скрізь.
+async function findScheduleConflict(models, params) {
+  if (await hasOverlap(models, params)) return 'appointment';
+  const [h, m] = params.startTime.split(':').map(Number);
+  const newStart = h * 60 + m;
+  const newEnd = newStart + params.totalDuration;
+  const breaks = await breakIntervals(models, params.employeeId, params.dateObj);
+  if (breaks.some((b) => newStart < b.end && b.start < newEnd)) return 'break';
+  return null;
+}
+
+module.exports = { dateKey, hasOverlap, findScheduleConflict };
