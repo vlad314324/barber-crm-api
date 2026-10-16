@@ -5,11 +5,10 @@ const {
   buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber,
   resolveAlias, CATEGORY_ALIASES, MAX_IMPORT_ROWS,
 } = require('../utils/excel');
-const crypto = require('crypto');
-const sharp = require('sharp');
 const { importUpload, imageUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const storage = require('../utils/storage');
+const { storeImage, InvalidImageError } = require('../utils/images');
 
 // Фото пишуться лише через /:id/image, щоб через create/update не можна
 // було підставити довільний URL чи чужий ключ бакета.
@@ -18,9 +17,7 @@ function stripImageFields(body) {
   delete body.imageKey;
 }
 
-// Квадратна мініатюра: фронтенд уже кадрує 1:1, але fit:'cover' страхує
-// прямі виклики API. rotate() без аргументів застосовує EXIF-орієнтацію
-// з фото з телефона (і sharp при цьому прибирає EXIF, разом із GPS).
+// Квадратна мініатюра (фронтенд кадрує 1:1).
 const SERVICE_IMAGE_SIZE = 600;
 
 const SERVICE_EXPORT_COLUMNS = [
@@ -277,28 +274,22 @@ router.post('/:id/image', requireRole('admin'), imageUpload('image'), async (req
     const service = await Service.findById(req.params.id).select('+imageKey');
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
 
-    let buffer;
-    try {
-      buffer = await sharp(req.file.buffer)
-        .rotate()
-        .resize(SERVICE_IMAGE_SIZE, SERVICE_IMAGE_SIZE, { fit: 'cover' })
-        .webp({ quality: 80 })
-        .toBuffer();
-    } catch (err) {
-      return sendError(res, 400, ERROR_CODES.IMAGE_INVALID_FILE_TYPE, 'Не вдалося прочитати зображення');
-    }
-
-    const key = `salons/${req.tenant.salonId}/services/${service._id}/${crypto.randomUUID()}.webp`;
-    await storage.putObject(key, buffer, 'image/webp');
+    const { key, url } = await storeImage(req.file.buffer, {
+      width: SERVICE_IMAGE_SIZE, height: SERVICE_IMAGE_SIZE,
+      keyPrefix: `salons/${req.tenant.salonId}/services/${service._id}`,
+    });
 
     // Точковий $set замість service.save(): повна валідація документа
     // не повинна блокувати фото через давні дані в інших полях.
     const updated = await Service.findByIdAndUpdate(
-      service._id, { $set: { imageUrl: storage.publicUrl(key), imageKey: key } }, { new: true }
+      service._id, { $set: { imageUrl: url, imageKey: key } }, { new: true }
     );
     await storage.deleteObject(service.imageKey);
     res.json(updated);
   } catch (err) {
+    if (err instanceof InvalidImageError) {
+      return sendError(res, 400, ERROR_CODES.IMAGE_INVALID_FILE_TYPE, err.message);
+    }
     handleRouteError(res, err, 'services/image-upload');
   }
 });

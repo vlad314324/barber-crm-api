@@ -11,6 +11,11 @@ const SettingsSchema = new mongoose.Schema({
   email: { type: String, default: '' },
   coverImageUrl: { type: String, default: '' },
   logoUrl:       { type: String, default: '' },
+  // Ключі об'єктів у R2, якщо лого/обкладинку завантажено через
+  // POST /settings/images/:kind (а не вписано зовнішнім URL). Лише для
+  // видалення старого файлу — назовні не віддаються.
+  coverImageKey: { type: String, select: false },
+  logoKey:       { type: String, select: false },
   tagline:       { type: String, default: '' },
   accentColor:   { type: String, default: '' },
   latitude:      { type: Number, default: null },
