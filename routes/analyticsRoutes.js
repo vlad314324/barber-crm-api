@@ -178,6 +178,7 @@ router.get('/forecast', async (req, res) => {
       if (n === 0) {
         forecast.push({
           date: targetDate.toLocaleDateString('uk-UA', { weekday: 'short', day: 'numeric', month: 'short' }),
+          isoDate: targetDate.toISOString().split('T')[0],
           predicted: 0
         });
         continue;
@@ -207,6 +208,9 @@ router.get('/forecast', async (req, res) => {
 
       forecast.push({
         date: targetDate.toLocaleDateString('uk-UA', { weekday: 'short', day: 'numeric', month: 'short' }),
+        // ISO-дата — фронтенд форматує її мовою інтерфейсу; `date` лишено
+        // для сумісності зі старим фронтендом.
+        isoDate: targetDate.toISOString().split('T')[0],
         predicted: val,
       });
 
