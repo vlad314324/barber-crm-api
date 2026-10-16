@@ -3,8 +3,10 @@ const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const requireRole = require('../middleware/requireRole');
 
-// Використовується лише на admin-only сторінці Services.tsx.
-router.use(requireRole('admin'));
+// Перегляд категорій — і адміну, і майстру (сторінка Послуг для майстра
+// лише на читання); усі зміни — тільки адмін.
+router.use((req, res, next) => (req.method === 'GET' ? next() : requireRole('admin')(req, res, next)));
+router.use(requireRole('admin', 'barber'));
 
 // Той самий набір іконок, що фронтенд пропонує у пікері — валідуємо проти
 // нього, щоб не зберегти довільний рядок, якого немає в lucide-react.

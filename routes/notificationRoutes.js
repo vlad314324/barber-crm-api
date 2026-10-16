@@ -1,12 +1,24 @@
 const express = require('express');
 const router = express.Router();
 const { ERROR_CODES, sendError, handleRouteError } = require('../utils/errorCodes');
+const { getBarberScope } = require('../utils/scope');
+
+// Адмін бачить усі сповіщення, майстер — лише про бронювання до себе
+// (старі сповіщення без поля employee майстру не показуються).
+async function scopeFilter(req) {
+  const scope = await getBarberScope(req);
+  if (!scope) return {};
+  // Майстер без прив'язки до Employee не отримує жодних сповіщень.
+  return scope.employeeId ? { employee: scope.employeeId } : { _id: null };
+}
 
 // GET /api/:salonSlug/notifications
 router.get('/', async (req, res) => {
   const { Notification } = req.models;
   try {
-    const notifications = await Notification.find().sort({ createdAt: -1 }).limit(50);
+    const scope = await getBarberScope(req);
+    if (scope && !scope.employeeId) return res.json([]);
+    const notifications = await Notification.find(await scopeFilter(req)).sort({ createdAt: -1 }).limit(50);
     res.json(notifications);
   } catch (err) {
     handleRouteError(res, err, 'notifications/list');
@@ -17,7 +29,7 @@ router.get('/', async (req, res) => {
 router.patch('/:id/read', async (req, res) => {
   const { Notification } = req.models;
   try {
-    const notification = await Notification.findByIdAndUpdate(req.params.id, { isRead: true }, { new: true });
+    const notification = await Notification.findOneAndUpdate({ _id: req.params.id, ...(await scopeFilter(req)) }, { isRead: true }, { new: true });
     if (!notification) return sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Сповіщення не знайдено');
     res.json(notification);
   } catch (err) {

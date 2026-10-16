@@ -390,6 +390,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
         appointmentId: appointment._id,
         clientName,
         employeeName: employee?.name || 'Майстер',
+        employee: employeeId,
         date: dateObj,
         startTime,
       });

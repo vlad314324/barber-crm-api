@@ -12,6 +12,7 @@ const {
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { notifyUserTelegram } = require('../config/telegramBot');
+const { getBarberScope, sameId } = require('../utils/scope');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -52,8 +53,15 @@ const APPOINTMENT_STATUSES = ['Scheduled', 'Completed', 'Cancelled', 'No-show'];
 router.get('/', async (req, res) => {
   const { Appointment } = req.models;
   try {
+    // Майстер бачить лише свої записи (майстер без прив'язки — жодних).
+    const scope = await getBarberScope(req);
+    const scopeFilter = scope ? { employee: scope.employeeId } : {};
+    if (scope && !scope.employeeId) {
+      return res.json(req.query.page === undefined ? [] : { appointments: [], total: 0, page: 1, limit: 25, totalPages: 1 });
+    }
+
     if (req.query.page === undefined) {
-      const appointments = await Appointment.find()
+      const appointments = await Appointment.find(scopeFilter)
         .populate('client')
         .populate('employee')
         .populate('services');
@@ -64,7 +72,7 @@ router.get('/', async (req, res) => {
     const limit = Math.min(Math.max(1, Number(req.query.limit) || 25), 100);
     const sortBy = req.query.sortBy === 'createdAt' ? 'createdAt' : 'date';
     const sortDir = req.query.sortDir === 'asc' ? 1 : -1;
-    const matchStage = APPOINTMENT_STATUSES.includes(req.query.status) ? { status: req.query.status } : {};
+    const matchStage = { ...scopeFilter, ...(APPOINTMENT_STATUSES.includes(req.query.status) ? { status: req.query.status } : {}) };
 
     const [appointments, total] = await Promise.all([
       Appointment.find(matchStage)
@@ -240,6 +248,10 @@ router.get('/:id', async (req, res) => {
       .populate('employee')
       .populate('services');
     if (!appointment) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+    const scope = await getBarberScope(req);
+    if (scope && !sameId(appointment.employee?._id, scope.employeeId)) {
+      return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+    }
     res.json(appointment);
   } catch (err) {
     handleRouteError(res, err, 'appointments/get');
@@ -268,6 +280,10 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    // Майстер записує лише на себе.
+    const scope = await getBarberScope(req);
+    if (scope && !sameId(employee, scope.employeeId)) return sendError(res, 403, ERROR_CODES.FORBIDDEN_ROLE, 'Майстер може працювати лише зі своїми записами');
+
     if (Array.isArray(services) && services.length > 0) {
       const empDoc = await Employee.findById(employee);
       if (!empDoc) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
@@ -326,6 +342,18 @@ router.put('/:id', async (req, res) => {
   try {
     const existing = await Appointment.findById(req.params.id);
     if (!existing) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+
+    // Майстер змінює лише свої записи і не може передати запис іншому.
+    const scope = await getBarberScope(req);
+    if (scope) {
+      if (!sameId(existing.employee, scope.employeeId)) return sendError(res, 403, ERROR_CODES.FORBIDDEN_ROLE, 'Майстер може працювати лише зі своїми записами');
+      if (req.body.employee !== undefined && !sameId(req.body.employee, scope.employeeId)) return sendError(res, 403, ERROR_CODES.FORBIDDEN_ROLE, 'Майстер може працювати лише зі своїми записами');
+    }
+    // Службові поля не змінюються через загальне оновлення (коментарі —
+    // окремим POST /:id/notes, решта — системні).
+    delete req.body.notes;
+    delete req.body.reminderSent;
+    delete req.body.source;
 
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
       const effectiveEmployeeId = req.body.employee || existing.employee;
@@ -421,6 +449,13 @@ router.post('/:id/notes', async (req, res) => {
   if (!text) return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, 'Текст коментаря обовʼязковий', { field: 'text' });
 
   try {
+    const scope = await getBarberScope(req);
+    if (scope) {
+      const target = await Appointment.findById(req.params.id).select('employee');
+      if (!target || !sameId(target.employee, scope.employeeId)) {
+        return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
+      }
+    }
     const author = await User.findById(req.user.id);
     const appointment = await Appointment.findByIdAndUpdate(
       req.params.id,

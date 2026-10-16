@@ -142,7 +142,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       console.error('Не вдалося створити CrmSession:', sessionErr.message);
     }
 
-    res.json({ token, crmSessionId, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+    res.json({ token, crmSessionId, user: await withEmployeeId(req.models, user, { id: user._id, name: user.name, email: user.email, role: user.role }) });
   } catch (err) {
     handleRouteError(res, err, 'auth/login');
   }
@@ -164,6 +164,14 @@ router.post('/heartbeat', verifyToken, async (req, res) => {
   }
 });
 
+// Для майстра додаємо id прив'язаного Employee — фронтенд так знає "себе"
+// (своя колонка календаря, запис лише на себе) без окремого запиту.
+async function withEmployeeId(models, user, payload) {
+  if (user.role !== 'barber') return payload;
+  const emp = await models.Employee.findOne({ userId: user._id }).select('_id');
+  return { ...payload, employeeId: emp ? emp._id : null };
+}
+
 // GET /api/:salonSlug/auth/me (protected by verifyToken)
 router.get('/me', verifyToken, async (req, res) => {
   const { User } = req.models;
@@ -175,7 +183,7 @@ router.get('/me', verifyToken, async (req, res) => {
     // (toJSON virtuals вимкнено), тож інакше на фронтенді user.id ставав би
     // undefined після перезавантаження сторінки (яке саме через /me бере
     // сесію) — хоча по логіну/реєстрації user.id працював коректно.
-    res.json({ id: user._id, name: user.name, email: user.email, role: user.role });
+    res.json(await withEmployeeId(req.models, user, { id: user._id, name: user.name, email: user.email, role: user.role }));
   } catch (err) {
     handleRouteError(res, err, 'auth/me');
   }

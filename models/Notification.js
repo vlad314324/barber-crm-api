@@ -8,6 +8,8 @@ const NotificationSchema = new mongoose.Schema({
   appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment' },
   clientName:    { type: String },
   employeeName:  { type: String },
+  // Майстер запису — щоб майстер бачив у дзвіночку лише свої бронювання.
+  employee:      { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
   date:          { type: Date },
   startTime:     { type: String },
 }, { timestamps: true });

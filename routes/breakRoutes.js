@@ -5,14 +5,15 @@ const { ERROR_CODES, sendError, handleRouteError } = require('../utils/errorCode
 const { TIME_RE } = require('../utils/scheduleWindow');
 const { breakDay, toMinutes } = require('../utils/breaks');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
+const { getBarberScope } = require('../utils/scope');
 
 const MAX_RANGE_DAYS = 31;
 const MAX_BREAKS_PER_DAY = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // GET /api/:salonSlug/breaks?from=YYYY-MM-DD&to=YYYY-MM-DD[&employeeId=]
-// Перерви для видимого діапазону календаря (день або тиждень). Доступно
-// всім автентифікованим — календар записів майстри теж бачать цілком.
+// Перерви для видимого діапазону календаря (день або тиждень). Адмін бачить
+// усіх, майстер — лише свої.
 router.get('/', async (req, res) => {
   const { EmployeeBreak } = req.models;
   const from = breakDay(req.query.from);
@@ -31,6 +32,12 @@ router.get('/', async (req, res) => {
     query.employee = req.query.employeeId;
   }
   try {
+    // Майстер бачить лише свій розклад — і свої перерви.
+    const scope = await getBarberScope(req);
+    if (scope) {
+      if (!scope.employeeId) return res.json([]);
+      query.employee = scope.employeeId;
+    }
     res.json(await EmployeeBreak.find(query).sort({ date: 1, startTime: 1 }));
   } catch (err) {
     handleRouteError(res, err, 'breaks/list');

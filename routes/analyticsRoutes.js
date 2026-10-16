@@ -1,15 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { handleRouteError } = require('../utils/errorCodes');
+const { ERROR_CODES, sendError, handleRouteError } = require('../utils/errorCodes');
 const requireRole = require('../middleware/requireRole');
 const { computeFunnelAnalytics, parseFunnelDays } = require('../utils/analyticsAggregation');
+const { getBarberScope, ownClientIds } = require('../utils/scope');
 
-// Використовується лише на admin-only сторінці Reports.tsx.
-router.use(requireRole('admin'));
+// Звіти (Reports.tsx): адмін бачить увесь салон, майстер — лише власну
+// статистику (огляд і прогноз). Воронка сайту й RFM — тільки адмін.
+router.use(requireRole('admin', 'barber'));
+
+// Фільтр записів за областю видимості; null — майстер без прив'язки до
+// Employee (тоді аналітики для нього немає → 403).
+async function appointmentScope(req) {
+  const scope = await getBarberScope(req);
+  if (!scope) return {};
+  return scope.employeeId ? { employee: scope.employeeId } : null;
+}
+const noEmployee = (res) => sendError(res, 403, ERROR_CODES.FORBIDDEN_ROLE, 'Ваш логін не привʼязаний до майстра');
 
 // GET /api/:salonSlug/analytics/funnel?days=30 — воронка публічної сторінки
 // бронювання цього салону (та сама, що бачить платформний адмін).
-router.get('/funnel', async (req, res) => {
+router.get('/funnel', requireRole('admin'), async (req, res) => {
   try {
     res.json(await computeFunnelAnalytics(req.models, parseFunnelDays(req.query.days)));
   } catch (err) {
@@ -21,16 +32,21 @@ router.get('/funnel', async (req, res) => {
 router.get('/dashboard', async (req, res) => {
   const { Appointment, Client, Employee } = req.models;
   try {
+    const apptFilter = await appointmentScope(req);
+    if (!apptFilter) return noEmployee(res);
+    const isBarber = !!apptFilter.employee;
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-    const allAppts = await Appointment.find({ status: 'Completed' }).populate('services');
+    const allAppts = await Appointment.find({ ...apptFilter, status: 'Completed' }).populate('services');
     const monthAppts = allAppts.filter(a => new Date(a.date) >= startOfMonth);
     const prevAppts = allAppts.filter(a => new Date(a.date) >= startOfPrevMonth && new Date(a.date) <= endOfPrevMonth);
-    const totalClients = await Client.countDocuments();
-    const employees = await Employee.find({ role: 'Barber' });
+    const totalClients = isBarber
+      ? (await ownClientIds(req.models, apptFilter.employee)).length
+      : await Client.countDocuments();
+    const employees = await Employee.find(isBarber ? { _id: apptFilter.employee } : { role: 'Barber' });
 
     const monthRevenue = monthAppts.reduce((s, a) => s + a.totalPrice, 0);
     const prevRevenue = prevAppts.reduce((s, a) => s + a.totalPrice, 0);
@@ -93,7 +109,10 @@ router.get('/dashboard', async (req, res) => {
     });
 
     // Статуси всіх записів (не лише виконаних) — частка скасувань/неявок.
-    const statusRows = await Appointment.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+    const statusRows = await Appointment.aggregate([
+      { $match: apptFilter },
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+    ]);
     const appointmentsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0 };
     statusRows.forEach(r => { if (appointmentsByStatus[r._id] !== undefined) appointmentsByStatus[r._id] = r.count; });
 
@@ -126,8 +145,12 @@ router.get('/forecast', async (req, res) => {
     const fourWeeksAgo = new Date();
     fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
 
+    const apptFilter = await appointmentScope(req);
+    if (!apptFilter) return noEmployee(res);
+
     // Беремо записи тільки за останні 4 тижні
     const appts = await Appointment.find({
+      ...apptFilter,
       status: 'Completed',
       date: { $gte: fourWeeksAgo }
     }).sort({ date: 1 });
@@ -235,7 +258,7 @@ router.get('/forecast', async (req, res) => {
 });
 
 // GET /api/:salonSlug/analytics/rfm
-router.get('/rfm', async (req, res) => {
+router.get('/rfm', requireRole('admin'), async (req, res) => {
   const { Client, Appointment } = req.models;
   try {
     const clients = await Client.find();

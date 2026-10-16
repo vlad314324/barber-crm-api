@@ -4,6 +4,7 @@ const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require(
 const { buildWorkbookBuffer, parseWorkbookBuffer, MAX_IMPORT_ROWS } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
+const { getBarberScope, isOwnClient, ownClientIds } = require('../utils/scope');
 
 const CLIENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -64,8 +65,12 @@ function escapeRegex(str) {
 router.get('/', async (req, res) => {
   const { Client, Appointment } = req.models;
   try {
+    // Майстер бачить лише своїх клієнтів — тих, у кого є запис до нього.
+    const scope = await getBarberScope(req);
+    const scopeFilter = scope ? { _id: { $in: await ownClientIds(req.models, scope.employeeId) } } : {};
+
     if (req.query.page === undefined) {
-      const clients = await Client.find().sort({ createdAt: -1 });
+      const clients = await Client.find(scopeFilter).select('-notes').sort({ createdAt: -1 });
       const stats = await computeClientStats(Appointment, clients.map((c) => c._id));
 
       const clientsWithStats = clients.map((client) => {
@@ -88,13 +93,14 @@ router.get('/', async (req, res) => {
 
     const matchStage = search
       ? {
+          ...scopeFilter,
           $or: [
             { name: { $regex: escapeRegex(search), $options: 'i' } },
             { phone: { $regex: escapeRegex(search), $options: 'i' } },
             { email: { $regex: escapeRegex(search), $options: 'i' } },
           ],
         }
-      : {};
+      : scopeFilter;
 
     // visits/lastVisit не зберігаються на клієнті — рахуємо через агрегацію
     // (а не JS-редьюс, як в решті проєкту), бо саме тут потрібне сортування
@@ -119,7 +125,7 @@ router.get('/', async (req, res) => {
           lastVisit: { $arrayElemAt: ['$completedAppointments.date', 0] },
         },
       },
-      { $project: { completedAppointments: 0 } },
+      { $project: { completedAppointments: 0, notes: 0 } },
       { $sort: { [sortBy]: sortDir, _id: 1 } },
       {
         $facet: {
@@ -215,14 +221,18 @@ router.get('/:id', async (req, res) => {
   try {
     const client = await Client.findById(req.params.id);
     if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    const scope = await getBarberScope(req);
+    if (scope && !(await isOwnClient(req.models, scope.employeeId, client._id))) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
 
     const appointments = await Appointment.find({
       client: client._id,
       status: 'Completed'
     }).sort({ date: -1 });
 
+    const obj = client.toObject();
+    obj.notes = [...(obj.notes || [])].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     res.json({
-      ...client.toObject(),
+      ...obj,
       visits: appointments.length,
       lastVisit: appointments[0]?.date || null,
     });
@@ -235,6 +245,8 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/appointments', async (req, res) => {
   const { Appointment } = req.models;
   try {
+    const scope = await getBarberScope(req);
+    if (scope && !(await isOwnClient(req.models, scope.employeeId, req.params.id))) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
     const appointments = await Appointment.find({ client: req.params.id })
       .populate('employee')
       .populate('services')
@@ -248,7 +260,7 @@ router.get('/:id/appointments', async (req, res) => {
 // POST create client
 router.post('/', async (req, res) => {
   const { Client } = req.models;
-  const { name, phone, email, notes } = req.body;
+  const { name, phone, email } = req.body;
 
   const missing = firstMissingField(req.body, ['name', 'phone', 'email']);
   if (missing) {
@@ -256,10 +268,19 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    // Майстер не бачить чужих клієнтів, тож може "створювати" людину, яка
+    // вже є в салоні (ходила до іншого майстра). Замість дубля чи помилки
+    // повертаємо наявного клієнта — після запису він стане й "своїм".
+    const scope = await getBarberScope(req);
+    if (scope) {
+      const known = await Client.findOne({ $or: [{ phone }, { email }] }).select('-notes');
+      if (known) return res.status(200).json(known);
+    }
+
     const existing = await Client.findOne({ email });
     if (existing) return sendError(res, 400, ERROR_CODES.CLIENT_EMAIL_EXISTS, 'Клієнт з таким email вже існує');
 
-    const client = new Client({ name, phone, email, notes });
+    const client = new Client({ name, phone, email });
     await client.save();
     res.status(201).json(client);
   } catch (err) {
@@ -270,6 +291,7 @@ router.post('/', async (req, res) => {
 // PUT update client
 router.put('/:id', requireRole('admin'), async (req, res) => {
   const { Client } = req.models;
+  delete req.body.notes; // коментарі — лише через POST /:id/notes
   try {
     const client = await Client.findByIdAndUpdate(
       req.params.id,
@@ -280,6 +302,33 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
     res.json(client);
   } catch (err) {
     handleRouteError(res, err, 'clients/update');
+  }
+});
+
+// POST /clients/:id/notes — коментар персоналу до клієнта (append-only).
+// Адмін — будь-якому клієнту, майстер — лише своєму. Видно всім у CRM.
+router.post('/:id/notes', async (req, res) => {
+  const { Client, User } = req.models;
+  if (!['admin', 'barber'].includes(req.user.role)) {
+    return sendError(res, 403, ERROR_CODES.FORBIDDEN_ROLE, 'Лише адміністратор або майстер може залишати коментарі');
+  }
+  const text = String(req.body.text || '').trim();
+  if (!text) return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, 'Текст коментаря обовʼязковий', { field: 'text' });
+  if (text.length > 1000) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Коментар — не довше 1000 символів', { field: 'text' });
+
+  try {
+    const scope = await getBarberScope(req);
+    if (scope && !(await isOwnClient(req.models, scope.employeeId, req.params.id))) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    const author = await User.findById(req.user.id).select('name');
+    const client = await Client.findByIdAndUpdate(
+      req.params.id,
+      { $push: { notes: { text, authorId: req.user.id, authorName: author?.name || '', authorRole: req.user.role, createdAt: new Date() } } },
+      { new: true, runValidators: true },
+    );
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    res.status(201).json([...client.notes].sort((a, b) => b.createdAt - a.createdAt));
+  } catch (err) {
+    handleRouteError(res, err, 'clients/addNote');
   }
 });
 

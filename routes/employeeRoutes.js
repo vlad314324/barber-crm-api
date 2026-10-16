@@ -54,7 +54,9 @@ const EMPLOYEE_IMPORT_COLUMNS = [
 router.get('/', async (req, res) => {
   const { Employee } = req.models;
   try {
-    const employees = await Employee.find().sort({ createdAt: -1 });
+    // Майстру — лише його власна картка (без чужих ставок і графіків).
+    const filter = req.user.role === 'admin' ? {} : { userId: req.user.id };
+    const employees = await Employee.find(filter).sort({ createdAt: -1 });
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'employees/list');
