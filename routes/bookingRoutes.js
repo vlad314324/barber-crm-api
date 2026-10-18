@@ -4,7 +4,7 @@ const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { findScheduleConflict } = require('../utils/appointmentOverlap');
-const { breakIntervals } = require('../utils/breaks');
+const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
@@ -107,7 +107,7 @@ router.get('/employees', async (req, res) => {
 
 // GET /api/:salonSlug/booking/available-slots?employeeId=...&date=...
 router.get('/available-slots', async (req, res) => {
-  const { Appointment, Settings, Employee } = req.models;
+  const { Settings, Employee } = req.models;
   const { employeeId, date, durationMinutes } = req.query;
   const missing = firstMissingField(req.query, ['employeeId', 'date']);
   if (missing) {
@@ -144,58 +144,13 @@ router.get('/available-slots', async (req, res) => {
 
     // Перетин годин салону й графіка САМЕ ЦЬОГО майстра — інакше слот
     // рекламується навіть у вихідний майстра, коли салон загалом відкритий.
-    const weekday = weekdayOf(date);
-    const window = effectiveWindow(settings, employee, weekday);
-
+    // Зайнятий час: записи + перерви майстра — однаково блокують слоти.
+    const { window, blocked } = await dayBusy(req.models, settings, employee, date);
     if (!window) {
       return res.json({ date, employeeId, availableSlots: [], closed: true });
     }
-    const { fromMinutes, toMinutes } = window;
 
-    // Записи майстра на цю дату
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const existing = await Appointment.find({
-      employee: employeeId,
-      date: { $gte: startOfDay, $lte: endOfDay },
-      status: { $nin: ['Cancelled'] },
-    });
-
-    // Генеруємо слоти в межах робочого часу
-    const allSlots = [];
-    for (let min = fromMinutes; min < toMinutes; min += 30) {
-      const h = String(Math.floor(min / 60)).padStart(2, '0');
-      const m = String(min % 60).padStart(2, '0');
-      allSlots.push(`${h}:${m}`);
-    }
-
-    // Зайнятий час: записи + перерви майстра — однаково блокують слоти.
-    const blocked = existing.map(apt => {
-      const [h, m] = apt.startTime.split(':').map(Number);
-      const start = h * 60 + m;
-      return { start, end: start + (apt.totalDuration || 30) };
-    }).concat(await breakIntervals(req.models, employeeId, date));
-
-    // Слот недоступний, якщо його початок потрапляє в зайнятий інтервал.
-    let availableSlots = allSlots.filter(slot => {
-      const [h, m] = slot.split(':').map(Number);
-      const slotStart = h * 60 + m;
-      return !blocked.some(b => slotStart >= b.start && slotStart < b.end);
-    });
-
-    if (requiredDuration) {
-      availableSlots = availableSlots.filter(slot => {
-        const [h, m] = slot.split(':').map(Number);
-        const slotStart = h * 60 + m;
-        const slotEnd = slotStart + requiredDuration;
-        if (slotEnd > toMinutes) return false; // запис не влазить у робочий день
-        return !blocked.some(b => slotStart < b.end && b.start < slotEnd);
-      });
-    }
-
+    const availableSlots = slotStarts(window, blocked, requiredDuration);
     res.json({ date, employeeId, availableSlots, closed: false });
   } catch (err) {
     handleRouteError(res, err, 'booking/available-slots');

@@ -13,6 +13,7 @@ const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { notifyUserTelegram } = require('../config/telegramBot');
 const { getBarberScope, sameId } = require('../utils/scope');
+const { dayBusy, freeWindowStarts } = require('../utils/freeSlots');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -237,6 +238,64 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
   }
 
   res.json({ created, updated, failed, errors });
+});
+
+// GET /free-windows?employeeId&from&to&step — вільні "віконця" майстра для
+// сторіс (Записи → Сторіс). Робочі дні з датами YYYY-MM-DD, старти з кроком
+// step хвилин у вільних проміжках; минулі дні/години відкидаються за
+// таймзоною салону. Майстер (barber) — лише про себе.
+const FREE_WINDOWS_MAX_DAYS = 31;
+router.get('/free-windows', async (req, res) => {
+  const { Settings, Employee } = req.models;
+  const { employeeId, from, to } = req.query;
+  const missing = firstMissingField(req.query, ['employeeId', 'from', 'to']);
+  if (missing) return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
+  if (typeof employeeId !== 'string') return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Поле "employeeId" має бути рядком', { field: 'employeeId' });
+
+  const step = Number(req.query.step ?? 60);
+  if (!Number.isInteger(step) || step < 30 || step > 240 || step % 30 !== 0) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'step має бути від 30 до 240 хвилин, кратним 30', { field: 'step' });
+  }
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  if (!DATE_RE.test(from) || !parseCalendarDate(from)) return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'from' });
+  if (!DATE_RE.test(to) || !parseCalendarDate(to)) return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'to' });
+  const fromDay = new Date(`${from}T00:00:00Z`);
+  const toDay = new Date(`${to}T00:00:00Z`);
+  const spanDays = Math.round((toDay - fromDay) / 86400000) + 1;
+  if (spanDays < 1 || spanDays > FREE_WINDOWS_MAX_DAYS) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, `Період має бути від 1 до ${FREE_WINDOWS_MAX_DAYS} днів`, { field: 'to' });
+  }
+
+  try {
+    const scope = await getBarberScope(req);
+    if (scope && !sameId(employeeId, scope.employeeId)) {
+      return sendError(res, 403, ERROR_CODES.FORBIDDEN_ROLE, 'Майстер може працювати лише зі своїми записами');
+    }
+    const employee = await Employee.findById(employeeId);
+    if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+    const settings = (await Settings.findOne()) || await Settings.create({});
+
+    // "Сьогодні" й "зараз" — у таймзоні салону, не сервера.
+    const timeZone = settings.timezone || 'Europe/Kyiv';
+    const nowParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date()).map((p) => [p.type, p.value]));
+    const today = `${nowParts.year}-${nowParts.month}-${nowParts.day}`;
+    const nowMinutes = Number(nowParts.hour) * 60 + Number(nowParts.minute);
+
+    const days = [];
+    for (let i = 0; i < spanDays; i++) {
+      const date = new Date(fromDay.getTime() + i * 86400000).toISOString().slice(0, 10);
+      if (date < today) continue;
+      const { window, blocked } = await dayBusy(req.models, settings, employee, date);
+      if (!window) continue;
+      const slots = freeWindowStarts(window, blocked, step, date === today ? nowMinutes : 0);
+      days.push({ date, slots });
+    }
+    res.json({ employeeId, step, days });
+  } catch (err) {
+    handleRouteError(res, err, 'appointments/free-windows');
+  }
 });
 
 // GET appointment by ID
