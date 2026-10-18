@@ -66,6 +66,14 @@ const appointmentSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Клієнтські Telegram-нагадування (за 24 год і за 2 год) — окремо від
+  // email-прапорця reminderSent, щоб провал одного каналу не блокував інший.
+  clientTgReminderSent: { type: Boolean, default: false },
+  clientTg2hSent: { type: Boolean, default: false },
+  // Одноразовий токен для кнопки "Отримувати сповіщення в Telegram" на
+  // екрані успішного бронювання (deep link t.me/<bot>?start=bk_...).
+  // Назовні не віддається.
+  tgToken: { type: String, select: false, index: { sparse: true } },
   // Внутрішні коментарі персоналу (адмін/барбер), не видимі клієнту.
   // Append-only лог, а не одне поле — щоб два співробітники не затирали
   // коментарі одне одного через "сліпий" PUT /:id, що перезаписує весь документ.

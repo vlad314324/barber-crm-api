@@ -4,10 +4,13 @@ const TelegramLink = require('../models/platform/TelegramLink');
 const { getTenantContext } = require('./tenantDb');
 const { sendReminder, formatEmailDate } = require('./mailer');
 const { sendTelegramMessage } = require('./telegramBot');
+const ClientTelegramLink = require('../models/platform/ClientTelegramLink');
+const { buildClientMessage } = require('./clientTelegram');
 const { zonedTimeToUtc } = require('../utils/timezone');
 
 const REMINDER_WINDOW_MS = 24 * 60 * 60 * 1000; // рівно 24 години
 const EMPLOYEE_REMINDER_WINDOW_MS = 2 * 60 * 60 * 1000; // рівно 2 години
+const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
 // Обчислює реальний UTC-момент початку запису з урахуванням часового поясу
@@ -105,6 +108,8 @@ async function runReminderTick(salonsOverride) {
             await models.Appointment.updateOne({ _id: apt._id }, { $set: { employeeReminderSent: false } }).catch(() => {});
           }
         }
+
+        await sendClientTelegramReminders(models, salon, settings, timezone, now, rangeStart, rangeEnd);
       }
 
       if (due.length === 0) continue;
@@ -147,6 +152,54 @@ async function runReminderTick(salonsOverride) {
       }
     } catch (err) {
       console.error(`Reminder job failed for salon ${salon.slug}:`, err);
+    }
+  }
+}
+
+// Telegram-нагадування КЛІЄНТАМ, підписаним у цьому салоні: за 24 год і за
+// 2 год. Кожне — лише якщо запис зроблено заздалегідь (інакше клієнт щойно
+// отримав підтвердження, і "нагадування" через годину лише дратує).
+async function sendClientTelegramReminders(models, salon, settings, timezone, now, rangeStart, rangeEnd) {
+  const links = await ClientTelegramLink.find({ salonId: salon._id, active: true }).select('clientId chatId');
+  if (!links.length) return;
+  const chatByClient = new Map(links.map((l) => [String(l.clientId), l.chatId]));
+
+  const candidates = await models.Appointment.find({
+    date: { $gte: rangeStart, $lte: rangeEnd },
+    status: 'Scheduled',
+    client: { $in: links.map((l) => l.clientId) },
+    $or: [{ clientTgReminderSent: { $ne: true } }, { clientTg2hSent: { $ne: true } }],
+  })
+    .populate('employee')
+    .populate('services');
+
+  for (const apt of candidates) {
+    const start = appointmentStart(apt, timezone).getTime();
+    const left = start - now;
+    if (left <= 0) continue;
+    const lead = start - new Date(apt.createdAt).getTime();
+
+    let kind = null;
+    let flag = null;
+    if (!apt.clientTg2hSent && left <= 2 * HOUR_MS && lead >= 3 * HOUR_MS) {
+      kind = 'reminder2h'; flag = 'clientTg2hSent';
+    } else if (!apt.clientTgReminderSent && left <= REMINDER_WINDOW_MS && left > 2 * HOUR_MS && lead >= 23 * HOUR_MS) {
+      kind = 'reminder24'; flag = 'clientTgReminderSent';
+    }
+    if (!kind) continue;
+
+    const claimed = await models.Appointment.findOneAndUpdate(
+      { _id: apt._id, [flag]: { $ne: true } },
+      { $set: { [flag]: true } }
+    );
+    if (!claimed) continue;
+
+    try {
+      await sendTelegramMessage(chatByClient.get(String(apt.client)), buildClientMessage(kind, { apt, settings, slug: salon.slug }));
+      console.log(`[${salon.slug}] Client Telegram ${kind} sent for appointment ${apt._id}`);
+    } catch (err) {
+      console.error(`[${salon.slug}] Client Telegram ${kind} failed for appointment ${apt._id}:`, err.message);
+      await models.Appointment.updateOne({ _id: apt._id }, { $set: { [flag]: false } }).catch(() => {});
     }
   }
 }

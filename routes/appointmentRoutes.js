@@ -12,6 +12,7 @@ const {
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { notifyUserTelegram } = require('../config/telegramBot');
+const { notifyClientTelegram } = require('../config/clientTelegram');
 const { getBarberScope, sameId } = require('../utils/scope');
 const { dayBusy, freeWindowStarts } = require('../utils/freeSlots');
 
@@ -413,6 +414,9 @@ router.put('/:id', async (req, res) => {
     delete req.body.notes;
     delete req.body.reminderSent;
     delete req.body.source;
+    delete req.body.tgToken;
+    delete req.body.clientTgReminderSent;
+    delete req.body.clientTg2hSent;
 
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
       const effectiveEmployeeId = req.body.employee || existing.employee;
@@ -436,6 +440,8 @@ router.put('/:id', async (req, res) => {
     if (req.body.date !== undefined || req.body.startTime !== undefined) {
       if (existing.reminderSent) req.body.reminderSent = false;
       if (existing.employeeReminderSent) req.body.employeeReminderSent = false;
+      if (existing.clientTgReminderSent) req.body.clientTgReminderSent = false;
+      if (existing.clientTg2hSent) req.body.clientTg2hSent = false;
     }
 
     let updated;
@@ -470,6 +476,14 @@ router.put('/:id', async (req, res) => {
     // лише хтось, хто дивиться в CRM, міг про це дізнатись.
     const justCancelled = existing.status !== 'Cancelled' && updated.status === 'Cancelled';
     const justRescheduled = !justCancelled && touchesSchedule && (req.body.date !== undefined || req.body.startTime !== undefined);
+    // Клієнту в Telegram — лише коли дата/час справді змінились (форма
+    // редагування шле date/startTime завжди, навіть при зміні статусу).
+    const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
+    const clientRescheduled = justRescheduled && updated.status !== 'Cancelled'
+      && (dayKey(existing.date) !== dayKey(updated.date) || existing.startTime !== updated.startTime);
+    if (justCancelled || clientRescheduled) {
+      notifyClientTelegram(req.models, req.tenant, updated._id, justCancelled ? 'cancelled' : 'rescheduled');
+    }
     if (justCancelled || justRescheduled) {
       (async () => {
         try {

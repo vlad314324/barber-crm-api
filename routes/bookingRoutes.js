@@ -10,6 +10,7 @@ const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow }
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { notifyUserTelegram } = require('../config/telegramBot');
+const { newTgToken, buildClientDeepLink, notifyClientTelegram, isClientLinked } = require('../config/clientTelegram');
 
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
 
@@ -283,6 +284,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
         status: 'Scheduled',
         preferredLang,
         source: 'public',
+        tgToken: newTgToken(),
       });
       return { conflict: null, appointment: created };
     });
@@ -363,8 +365,18 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       console.error('Не вдалося створити сповіщення про бронювання:', notifErr.message);
     }
 
+    // Telegram клієнта: якщо він уже підписаний у цьому салоні (з минулого
+    // бронювання) — підтвердження одразу туди; інакше екран успіху покаже
+    // кнопку з deep link на підписку.
+    const telegramLinked = await isClientLinked(req.tenant.salonId, client._id).catch(() => false);
+    if (telegramLinked) {
+      notifyClientTelegram(req.models, req.tenant, appointment._id, 'confirmation');
+    }
+
     const responseBody = {
       msg: 'Запис створено успішно',
+      telegramLinked,
+      telegramUrl: telegramLinked ? null : buildClientDeepLink(req.tenant.salonId, appointment.tgToken),
       appointment: {
         id: appointment._id,
         date,

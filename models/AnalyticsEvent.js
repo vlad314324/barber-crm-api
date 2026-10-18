@@ -18,6 +18,7 @@ const EVENT_TYPES = [
   'contacts_entered',
   'submit_success',
   'submit_failed',
+  'telegram_optin_click',
 ];
 
 const analyticsEventSchema = new mongoose.Schema({

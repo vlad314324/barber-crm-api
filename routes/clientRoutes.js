@@ -5,6 +5,7 @@ const { buildWorkbookBuffer, parseWorkbookBuffer, MAX_IMPORT_ROWS } = require('.
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { getBarberScope, isOwnClient, ownClientIds } = require('../utils/scope');
+const { isClientLinked } = require('../config/clientTelegram');
 
 const CLIENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -235,6 +236,7 @@ router.get('/:id', async (req, res) => {
       ...obj,
       visits: appointments.length,
       lastVisit: appointments[0]?.date || null,
+      telegramLinked: await isClientLinked(req.tenant.salonId, client._id).catch(() => false),
     });
   } catch (err) {
     handleRouteError(res, err, 'clients/get');
