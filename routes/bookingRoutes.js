@@ -6,7 +6,7 @@ const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { findScheduleConflict } = require('../utils/appointmentOverlap');
 const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
-const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow } = require('../utils/scheduleWindow');
+const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { notifyUserTelegram } = require('../config/telegramBot');
@@ -73,7 +73,7 @@ router.get('/settings', async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
-    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency } = settings;
+    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingOpenUntil } = settings;
     const bookingGroupByCategory = !!settings.bookingGroupByCategory;
     // Порядок секцій на сторінці бронювання — порядок створення категорій
     // (так само їх бачить адмін). Лише назви: самі категорії — admin-only.
@@ -85,7 +85,7 @@ router.get('/settings', async (req, res) => {
     const serviceCategoryTranslations = Object.fromEntries(
       categories.map((c) => [c.name, Object.fromEntries(c.translations || [])])
     );
-    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations });
+    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations, bookingOpenUntil: bookingOpenUntil || '' });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }
@@ -142,6 +142,11 @@ router.get('/available-slots', async (req, res) => {
 
     const employee = await Employee.findById(employeeId);
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+
+    // Графік на цю дату ще не відкрито для онлайн-запису.
+    if (isBeyondBookingHorizon(settings, date)) {
+      return res.json({ date, employeeId, availableSlots: [], closed: true, notOpenYet: true, bookingOpenUntil: settings.bookingOpenUntil });
+    }
 
     // Перетин годин салону й графіка САМЕ ЦЬОГО майстра — інакше слот
     // рекламується навіть у вихідний майстра, коли салон загалом відкритий.
@@ -214,6 +219,9 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     if (!employee.isAvailable || employee.isActive === false) return sendError(res, 400, ERROR_CODES.EMPLOYEE_UNAVAILABLE, 'Майстер тимчасово недоступний для запису');
 
     const settings = await Settings.findOne();
+    if (isBeyondBookingHorizon(settings, date)) {
+      return sendError(res, 400, ERROR_CODES.BOOKING_NOT_OPEN_YET, 'Онлайн-запис на цю дату ще не відкрито', { field: 'date', bookingOpenUntil: settings.bookingOpenUntil });
+    }
     const rangesEnabled = !!settings?.serviceRangesEnabled;
     if (!preferredLang) {
       preferredLang = EMAIL_LANGS.includes(settings?.defaultBookingLanguage) ? settings.defaultBookingLanguage : 'uk';

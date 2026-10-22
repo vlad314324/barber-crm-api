@@ -65,4 +65,14 @@ function effectiveWindow(settings, employee, weekdayIdx) {
   return { fromMinutes, toMinutes: toMinutesVal };
 }
 
-module.exports = { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow };
+// Чи дата `date` пізніша за межу онлайн-запису (Settings.bookingOpenUntil).
+// Порівнюємо календарні "YYYY-MM-DD" рядком — без таймзон.
+function isBeyondBookingHorizon(settings, date) {
+  const until = settings?.bookingOpenUntil;
+  const cal = parseCalendarDate(date);
+  if (!until || !cal) return false;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${cal.year}-${pad(cal.month)}-${pad(cal.day)}` > until;
+}
+
+module.exports = { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon };

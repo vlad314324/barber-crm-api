@@ -74,6 +74,11 @@ const SettingsSchema = new mongoose.Schema({
   // згрупованими за категоріями у розкривних секціях (зручно, коли послуг
   // багато). Вимкнено за замовчуванням — плоский список, як і раніше.
   bookingGroupByCategory: { type: Boolean, default: false },
+  // Останній день, на який відкритий онлайн-запис ("YYYY-MM-DD"; '' — без
+  // обмеження). Пізніші дні публічна сторінка не показує й не приймає —
+  // коли графік наступного місяця ще не сплановано. Персонал у CRM і далі
+  // записує на будь-яку дату.
+  bookingOpenUntil: { type: String, default: '', match: /^(\d{4}-\d{2}-\d{2})?$/ },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;

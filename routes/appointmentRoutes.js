@@ -288,6 +288,8 @@ router.get('/free-windows', async (req, res) => {
     for (let i = 0; i < spanDays; i++) {
       const date = new Date(fromDay.getTime() + i * 86400000).toISOString().slice(0, 10);
       if (date < today) continue;
+      // Віконця для сторіс ведуть на онлайн-запис — дні поза ним не показуємо.
+      if (settings.bookingOpenUntil && date > settings.bookingOpenUntil) continue;
       const { window, blocked } = await dayBusy(req.models, settings, employee, date);
       if (!window) continue;
       const slots = freeWindowStarts(window, blocked, step, date === today ? nowMinutes : 0);
