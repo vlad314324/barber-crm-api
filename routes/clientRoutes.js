@@ -6,12 +6,15 @@ const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { getBarberScope, isOwnClient, ownClientIds } = require('../utils/scope');
 const { isClientLinked } = require('../config/clientTelegram');
+const { normalizeInstagram, parseBirthday } = require('../utils/clientFields');
 
 const CLIENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
   { header: 'Name', key: 'name' },
   { header: 'Phone', key: 'phone' },
   { header: 'Email', key: 'email' },
+  { header: 'Instagram', key: 'instagram' },
+  { header: 'Birthday', key: 'birthday' },
   { header: 'Visits', key: 'visits' },
   { header: 'Last Visit', key: 'lastVisit' },
 ];
@@ -19,7 +22,22 @@ const CLIENT_IMPORT_COLUMNS = [
   { header: 'Name', key: 'name', aliases: ['Назва', "Ім'я", 'ПІБ', 'Full Name'], required: true },
   { header: 'Phone', key: 'phone', aliases: ['Телефон', 'Тел.', 'Tel'], required: true },
   { header: 'Email', key: 'email', aliases: ['Пошта', 'Е-пошта', 'E-mail'], required: true },
+  { header: 'Instagram', key: 'instagram', aliases: ['Інстаграм', 'Insta'] },
+  { header: 'Birthday', key: 'birthday', aliases: ['Дата народження', 'День народження', 'Birth Date', 'Datum narození'] },
 ];
+
+// Нормалізує необовʼязкові instagram/birthday у тілі запиту на місці.
+// Повертає текст помилки або null. Поля, яких немає в тілі, не чіпає —
+// щоб PUT з частковими даними не затирав їх порожнім значенням.
+function applyOptionalFields(body) {
+  if (body.instagram !== undefined) body.instagram = normalizeInstagram(body.instagram);
+  if (body.birthday !== undefined) {
+    const birthday = parseBirthday(body.birthday);
+    if (birthday === null) return 'Некоректна дата народження';
+    body.birthday = birthday;
+  }
+  return null;
+}
 
 // Один запит замість одного на клієнта (N+1): підвантажує завершені записи
 // для всіх переданих clientId одразу й групує в JS. Сортування за спаданням
@@ -99,6 +117,7 @@ router.get('/', async (req, res) => {
             { name: { $regex: escapeRegex(search), $options: 'i' } },
             { phone: { $regex: escapeRegex(search), $options: 'i' } },
             { email: { $regex: escapeRegex(search), $options: 'i' } },
+            { instagram: { $regex: escapeRegex(search.replace(/^@/, '')), $options: 'i' } },
           ],
         }
       : scopeFilter;
@@ -157,6 +176,8 @@ router.get('/export', requireRole('admin'), async (req, res) => {
         name: client.name,
         phone: client.phone,
         email: client.email,
+        instagram: client.instagram || '',
+        birthday: client.birthday || '',
         visits: s?.visits || 0,
         lastVisit: s?.lastVisit ? new Date(s.lastVisit).toISOString().slice(0, 10) : '',
       };
@@ -199,12 +220,20 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       const email = String(row.email || '').trim();
       if (!name || !phone || !email) throw new Error('Поля Name, Phone, Email обовʼязкові');
 
+      const fields = { name, phone, email };
+      // Порожня клітинка Instagram/Birthday не затирає вже збережене значення.
+      const instagram = normalizeInstagram(row.instagram);
+      if (instagram) fields.instagram = instagram;
+      const birthday = parseBirthday(row.birthday);
+      if (birthday === null) throw new Error('Некоректна дата народження');
+      if (birthday) fields.birthday = birthday;
+
       const existing = await Client.findOne({ email });
       if (existing) {
-        await Client.updateOne({ _id: existing._id }, { name, phone, email }, { runValidators: true });
+        await Client.updateOne({ _id: existing._id }, fields, { runValidators: true });
         updated++;
       } else {
-        await new Client({ name, phone, email }).save();
+        await new Client(fields).save();
         created++;
       }
     } catch (err) {
@@ -268,6 +297,9 @@ router.post('/', async (req, res) => {
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
   }
+  const optionalError = applyOptionalFields(req.body);
+  if (optionalError) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, optionalError, { field: 'birthday' });
+  const { instagram = '', birthday = '' } = req.body;
 
   try {
     // Майстер не бачить чужих клієнтів, тож може "створювати" людину, яка
@@ -282,7 +314,7 @@ router.post('/', async (req, res) => {
     const existing = await Client.findOne({ email });
     if (existing) return sendError(res, 400, ERROR_CODES.CLIENT_EMAIL_EXISTS, 'Клієнт з таким email вже існує');
 
-    const client = new Client({ name, phone, email });
+    const client = new Client({ name, phone, email, instagram, birthday });
     await client.save();
     res.status(201).json(client);
   } catch (err) {
@@ -294,6 +326,8 @@ router.post('/', async (req, res) => {
 router.put('/:id', requireRole('admin'), async (req, res) => {
   const { Client } = req.models;
   delete req.body.notes; // коментарі — лише через POST /:id/notes
+  const optionalError = applyOptionalFields(req.body);
+  if (optionalError) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, optionalError, { field: 'birthday' });
   try {
     const client = await Client.findByIdAndUpdate(
       req.params.id,

@@ -13,6 +13,10 @@ const clientSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  // Необовʼязкові. instagram — нік без "@", birthday — "YYYY-MM-DD"
+  // (нормалізуються в utils/clientFields.js перед збереженням).
+  instagram: { type: String, default: '', trim: true, maxlength: 60 },
+  birthday: { type: String, default: '', match: /^(\d{4}-\d{2}-\d{2})?$/ },
   // Внутрішні коментарі персоналу до клієнта (append-only, як
   // Appointment.notes). Бачать усі в CRM; автор зберігається, щоб було
   // видно, хто з майстрів/адмінів залишив коментар.
