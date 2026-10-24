@@ -79,6 +79,14 @@ const SettingsSchema = new mongoose.Schema({
   // коли графік наступного місяця ще не сплановано. Персонал у CRM і далі
   // записує на будь-яку дату.
   bookingOpenUntil: { type: String, default: '', match: /^(\d{4}-\d{2}-\d{2})?$/ },
+  // Останні значення з діалогу "Привітати зі знижкою" — підставляються
+  // наступного разу (routes/clientRoutes.js).
+  birthdayGreetingDefaults: {
+    discountPercent: { type: Number, default: 15 },
+    validDays: { type: Number, default: 14 },
+    sendTime: { type: String, default: '10:00' },
+    message: { type: String, default: '' },
+  },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;

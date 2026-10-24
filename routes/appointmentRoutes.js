@@ -419,6 +419,9 @@ router.put('/:id', async (req, res) => {
     delete req.body.tgToken;
     delete req.body.clientTgReminderSent;
     delete req.body.clientTg2hSent;
+    delete req.body.discountPercent;
+    delete req.body.priceBeforeDiscount;
+    delete req.body.birthdayGreeting;
 
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
       const effectiveEmployeeId = req.body.employee || existing.employee;
@@ -483,6 +486,11 @@ router.put('/:id', async (req, res) => {
     const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
     const clientRescheduled = justRescheduled && updated.status !== 'Cancelled'
       && (dayKey(existing.date) !== dayKey(updated.date) || existing.startTime !== updated.startTime);
+    // Скасований запис звільняє знижку до дня народження — клієнт може
+    // скористатися посиланням з привітання ще раз.
+    if (justCancelled && updated.birthdayGreeting) {
+      await req.models.BirthdayGreeting.updateOne({ promoAppointment: updated._id }, { $set: { promoAppointment: null } }).catch(() => {});
+    }
     if (justCancelled || clientRescheduled) {
       notifyClientTelegram(req.models, req.tenant, updated._id, justCancelled ? 'cancelled' : 'rescheduled');
     }
@@ -560,6 +568,9 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     }
 
     await appointment.deleteOne();
+    if (appointment.birthdayGreeting) {
+      await req.models.BirthdayGreeting.updateOne({ promoAppointment: appointment._id }, { $set: { promoAppointment: null } }).catch(() => {});
+    }
     res.json({ msg: 'Appointment removed' });
   } catch (err) {
     handleRouteError(res, err, 'appointments/delete');

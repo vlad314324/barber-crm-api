@@ -244,7 +244,9 @@ const formatEmailDate = (date, lang) => {
 
 // Збирає тему й HTML листа-підтвердження (без відправки) — окремо, щоб
 // мовні шаблони можна було перевірити тестом.
-const buildBookingConfirmation = ({ clientName, employeeName, services, date, startTime, totalPrice, totalPriceMax, totalDuration, totalDurationMin, lang, currency, rangesEnabled }) => {
+const BIRTHDAY_DISCOUNT_LABEL = { uk: 'Знижка до дня народження', en: 'Birthday discount', cs: 'Narozeninová sleva', pl: 'Zniżka urodzinowa' };
+
+const buildBookingConfirmation = ({ clientName, employeeName, services, date, startTime, totalPrice, totalPriceMax, totalDuration, totalDurationMin, lang, currency, rangesEnabled, discountPercent, priceBeforeDiscount, priceBeforeDiscountMax }) => {
   const currencyLabel = currencySymbol(currency);
   const t = resolveTemplate(lang);
   const dateLabel = formatEmailDate(date, lang);
@@ -294,8 +296,13 @@ const buildBookingConfirmation = ({ clientName, employeeName, services, date, st
             </ul>
           </div>
 
+          ${discountPercent ? `
+          <div style="border-top: 1px solid #e5e7eb; margin-top: 12px; padding-top: 12px; color: #047857; font-weight: 600; font-size: 14px;">
+            🎁 ${BIRTHDAY_DISCOUNT_LABEL[lang] || BIRTHDAY_DISCOUNT_LABEL.uk} −${discountPercent}%
+          </div>` : ''}
           <div style="border-top: 1px solid #e5e7eb; margin-top: 12px; padding-top: 12px;">
             <span style="font-weight: 700; font-size: 16px;">${t.totalLabel}</span>
+            ${discountPercent ? `<span style="color: #9ca3af; text-decoration: line-through; margin-right: 6px;">${formatRange(priceBeforeDiscount, priceBeforeDiscountMax)} ${currencyLabel}</span>` : ''}
             <span style="font-weight: 700; font-size: 18px; color: #4f46e5;">${formatRange(totalPrice, totalPriceMax)} ${currencyLabel}</span>
           </div>
         </div>
@@ -494,4 +501,5 @@ const sendSalonDeactivatedEmail = async ({ email, ownerName, salonName, reason }
 module.exports = {
   sendBookingConfirmation, sendEmployeeBookingNotification, sendReminder, sendPasswordResetEmail, sendSalonDeactivatedEmail,
   buildBookingConfirmation, formatEmailDate, EMAIL_LANGS: Object.keys(EMAIL_LOCALES),
+  sendMail, emailHeader, emailFooter,
 };

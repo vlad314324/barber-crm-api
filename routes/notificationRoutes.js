@@ -7,7 +7,9 @@ const { getBarberScope } = require('../utils/scope');
 // (старі сповіщення без поля employee майстру не показуються).
 async function scopeFilter(req) {
   const scope = await getBarberScope(req);
-  if (!scope) return {};
+  // Нагадування про ДН дублюються персонально для майстрів клієнта —
+  // адміну показуємо лише його власну копію (без employee).
+  if (!scope) return { $or: [{ type: { $ne: 'birthday' } }, { employee: null }] };
   // Майстер без прив'язки до Employee не отримує жодних сповіщень.
   return scope.employeeId ? { employee: scope.employeeId } : { _id: null };
 }

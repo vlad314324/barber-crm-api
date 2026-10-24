@@ -7,6 +7,11 @@ const requireRole = require('../middleware/requireRole');
 const { getBarberScope, isOwnClient, ownClientIds } = require('../utils/scope');
 const { isClientLinked } = require('../config/clientTelegram');
 const { normalizeInstagram, parseBirthday } = require('../utils/clientFields');
+const { todayInZone, upcomingBirthdays, nextOccurrence } = require('../utils/birthdays');
+const { TIME_RE, toZonedInstant } = require('../utils/scheduleWindow');
+const { deliverGreeting } = require('../config/birthdayGreeting');
+const { newPromoToken } = require('../utils/birthdayPromo');
+const ClientTelegramLink = require('../models/platform/ClientTelegramLink');
 
 const CLIENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -243,6 +248,144 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
   }
 
   res.json({ created, updated, failed, errors });
+});
+
+// GET /clients/birthdays?days=30 — найближчі дні народження (для персональних
+// акцій). "Сьогодні" — за таймзоною салону. Майстер бачить лише своїх клієнтів.
+router.get('/birthdays', async (req, res) => {
+  const { Client, Settings } = req.models;
+  const days = Number(req.query.days ?? 30);
+  if (!Number.isInteger(days) || days < 1 || days > 366) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'days має бути від 1 до 366', { field: 'days' });
+  }
+  try {
+    const scope = await getBarberScope(req);
+    const filter = { birthday: { $nin: ['', null] } };
+    if (scope) filter._id = { $in: await ownClientIds(req.models, scope.employeeId) };
+    const [clients, settings] = await Promise.all([
+      Client.find(filter).select('name phone email instagram birthday'),
+      Settings.findOne().select('timezone'),
+    ]);
+    const today = todayInZone(settings?.timezone || 'Europe/Kyiv');
+    const list = upcomingBirthdays(clients, today, days);
+
+    // Канали зв'язку й уже створені привітання — одним запитом на весь список.
+    const ids = list.map((b) => b.client._id);
+    const [links, greetings] = await Promise.all([
+      ClientTelegramLink.find({ salonId: req.tenant.salonId, clientId: { $in: ids }, active: true }).select('clientId'),
+      req.models.BirthdayGreeting.find({ client: { $in: ids }, birthdayDate: { $in: list.map((b) => b.date) } }),
+    ]);
+    const linked = new Set(links.map((l) => String(l.clientId)));
+    const greetingFor = (b) => greetings.find((g) => String(g.client) === String(b.client._id) && g.birthdayDate === b.date);
+
+    res.json(list.map((b) => {
+      const g = greetingFor(b);
+      return {
+        _id: b.client._id, name: b.client.name, phone: b.client.phone, instagram: b.client.instagram, birthday: b.client.birthday,
+        date: b.date, daysUntil: b.daysUntil, age: b.age,
+        hasEmail: !!b.client.email, telegramLinked: linked.has(String(b.client._id)),
+        greeting: g && g.status !== 'cancelled'
+          ? { status: g.status, sendAt: g.sendAt, sendTime: g.sendTime, discountPercent: g.discountPercent, validDays: g.validDays, message: g.message, channels: g.channels, promoUsed: !!g.promoAppointment }
+          : null,
+      };
+    }));
+  } catch (err) {
+    handleRouteError(res, err, 'clients/birthdays');
+  }
+});
+
+// GET /clients/birthday-greeting/defaults — останні значення з діалогу
+// "Привітати зі знижкою".
+router.get('/birthday-greeting/defaults', requireRole('admin'), async (req, res) => {
+  try {
+    const settings = await req.models.Settings.findOne().select('birthdayGreetingDefaults');
+    const d = settings?.birthdayGreetingDefaults || {};
+    res.json({ discountPercent: d.discountPercent ?? 15, validDays: d.validDays ?? 14, sendTime: d.sendTime || '10:00', message: d.message || '' });
+  } catch (err) {
+    handleRouteError(res, err, 'clients/birthdayGreetingDefaults');
+  }
+});
+
+// POST /clients/:id/birthday-greeting — запланувати привітання з днем
+// народження зі знижкою на найближчий ДН клієнта, о sendTime за таймзоною
+// салону. Якщо ДН сьогодні й цей час уже настав — надсилаємо одразу.
+// Повторний виклик на той самий ДН оновлює ще не надіслане привітання.
+router.post('/:id/birthday-greeting', requireRole('admin'), async (req, res) => {
+  const { Client, Settings, BirthdayGreeting, User } = req.models;
+  const discountPercent = Number(req.body.discountPercent);
+  const validDays = Number(req.body.validDays);
+  const { sendTime } = req.body;
+  const message = typeof req.body.message === 'string' ? req.body.message.trim().slice(0, 300) : '';
+  if (!Number.isInteger(discountPercent) || discountPercent < 1 || discountPercent > 90) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Знижка має бути від 1 до 90%', { field: 'discountPercent' });
+  }
+  if (!Number.isInteger(validDays) || validDays < 1 || validDays > 90) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Термін дії — від 1 до 90 днів', { field: 'validDays' });
+  }
+  if (typeof sendTime !== 'string' || !TIME_RE.test(sendTime)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_TIME_FORMAT, 'Некоректний час відправки', { field: 'sendTime' });
+  }
+  try {
+    const client = await Client.findById(req.params.id);
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    if (!client.birthday) return sendError(res, 400, ERROR_CODES.CLIENT_NO_BIRTHDAY, 'У клієнта не вказано дату народження', { field: 'birthday' });
+    const hasTelegram = !!(await ClientTelegramLink.exists({ salonId: req.tenant.salonId, clientId: client._id, active: true }));
+    if (!client.email && !hasTelegram) {
+      return sendError(res, 400, ERROR_CODES.CLIENT_NO_CONTACT_CHANNEL, 'У клієнта немає email чи Telegram для привітання');
+    }
+
+    const settings = (await Settings.findOne()) || await Settings.create({});
+    const timezone = settings.timezone || 'Europe/Kyiv';
+    const next = nextOccurrence(client.birthday, todayInZone(timezone));
+    const sendAt = toZonedInstant(next.date, sendTime, timezone);
+
+    const existing = await BirthdayGreeting.findOne({ client: client._id, birthdayDate: next.date });
+    if (existing && ['sent', 'sending'].includes(existing.status)) {
+      return sendError(res, 409, ERROR_CODES.BIRTHDAY_GREETING_ALREADY_SENT, 'Привітання на цей день народження вже надіслано');
+    }
+    const author = await User.findById(req.user.id).select('name');
+    let greeting = await BirthdayGreeting.findOneAndUpdate(
+      { client: client._id, birthdayDate: next.date },
+      {
+        $set: { sendTime, sendAt, discountPercent, validDays, message, status: 'scheduled', createdBy: author?.name },
+        $setOnInsert: { promoToken: newPromoToken() },
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    settings.birthdayGreetingDefaults = { discountPercent, validDays, sendTime, message };
+    await settings.save();
+
+    if (next.daysUntil === 0 && sendAt.getTime() <= Date.now()) {
+      // Атомарно забираємо, щоб паралельний тік джоби не надіслав удруге.
+      const claimed = await BirthdayGreeting.findOneAndUpdate({ _id: greeting._id, status: 'scheduled' }, { $set: { status: 'sending' } });
+      if (claimed) greeting = await deliverGreeting(req.models, req.tenant, greeting);
+    }
+    res.status(existing ? 200 : 201).json(greeting);
+  } catch (err) {
+    handleRouteError(res, err, 'clients/birthdayGreeting');
+  }
+});
+
+// DELETE /clients/:id/birthday-greeting — скасувати заплановане привітання
+// на найближчий ДН.
+router.delete('/:id/birthday-greeting', requireRole('admin'), async (req, res) => {
+  const { Client, Settings, BirthdayGreeting } = req.models;
+  try {
+    const client = await Client.findById(req.params.id).select('birthday');
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    const settings = await Settings.findOne().select('timezone');
+    const next = client.birthday ? nextOccurrence(client.birthday, todayInZone(settings?.timezone || 'Europe/Kyiv')) : null;
+    const greeting = next && await BirthdayGreeting.findOneAndUpdate(
+      { client: client._id, birthdayDate: next.date, status: 'scheduled' },
+      { $set: { status: 'cancelled' } },
+      { new: true }
+    );
+    if (!greeting) return sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Запланованого привітання немає');
+    res.json(greeting);
+  } catch (err) {
+    handleRouteError(res, err, 'clients/birthdayGreetingCancel');
+  }
 });
 
 // GET client by ID

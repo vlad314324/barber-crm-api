@@ -4,6 +4,7 @@ const connectDB = require('./config/db');
 const { startReminderJob } = require('./config/reminderJob');
 const { startPlatformRollupJob } = require('./config/platformRollupJob');
 const { startTelegramDailySummaryJob } = require('./config/telegramDailySummaryJob');
+const { startBirthdayGreetingJob } = require('./config/birthdayGreetingJob');
 const { closeAllTenantConnections } = require('./config/tenantDb');
 
 const PORT = process.env.PORT || 5000;
@@ -51,6 +52,10 @@ async function main() {
     telegramDailySummaryTask = startTelegramDailySummaryJob();
   }
 
+  // Привітання з ДН — відправка запланованого адміном у CRM, вимикати не
+  // треба (без запланованих привітань тік нічого не робить).
+  const birthdayGreetingTask = startBirthdayGreetingJob();
+
   const server = app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
   let shuttingDown = false;
@@ -62,6 +67,7 @@ async function main() {
     reminderTask?.stop();
     rollupTask?.stop();
     telegramDailySummaryTask?.stop();
+    birthdayGreetingTask?.stop();
 
     // Безпечна сітка: якщо активні запити/з'єднання ніколи не спорожніють
     // (наприклад, зависле з'єднання клієнта), не висіти вічно — примусово

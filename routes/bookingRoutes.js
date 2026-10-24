@@ -8,6 +8,8 @@ const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
+const mongoose = require('mongoose');
+const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { notifyUserTelegram } = require('../config/telegramBot');
 const { newTgToken, buildClientDeepLink, notifyClientTelegram, isClientLinked } = require('../config/clientTelegram');
@@ -91,6 +93,28 @@ router.get('/settings', async (req, res) => {
   }
 });
 
+// GET /api/:salonSlug/booking/gift/:token — знижка до дня народження за
+// персональним посиланням з привітання (?gift=...). Сторінка бронювання
+// показує банер і ціни зі знижкою; сама знижка перевіряється ще раз при
+// бронюванні (дата візиту, телефон, одноразовість).
+router.get('/gift/:token', async (req, res) => {
+  try {
+    const greeting = await findPromo(req.models, req.params.token);
+    if (!greeting) return sendError(res, 404, ERROR_CODES.PROMO_NOT_FOUND, 'Знижку не знайдено');
+    const client = await req.models.Client.findById(greeting.client).select('name');
+    const { from, until } = promoWindow(greeting);
+    res.json({
+      discountPercent: greeting.discountPercent,
+      validFrom: from,
+      validUntil: until,
+      firstName: String(client?.name || '').trim().split(/\s+/)[0] || '',
+      used: !!greeting.promoAppointment,
+    });
+  } catch (err) {
+    handleRouteError(res, err, 'booking/gift');
+  }
+});
+
 // GET /api/:salonSlug/booking/employees — публічний, без автентифікації.
 // Явний allowlist полів (а не повний документ): phone/email/hourlyRate/
 // userId/schedule/rating тощо — внутрішні дані персоналу, сторінці
@@ -166,7 +190,7 @@ router.get('/available-slots', async (req, res) => {
 // POST /api/:salonSlug/booking — створити запис
 router.post('/', publicBookingLimiter, async (req, res) => {
   const { Employee, Service, Appointment, Client, Settings, IdempotencyKey } = req.models;
-  const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang } = req.body;
+  const { employeeId, serviceIds, date, startTime, clientName, clientPhone, clientEmail, lang, giftToken } = req.body;
 
   const missing = firstMissingField(req.body, ['employeeId', 'serviceIds', 'date', 'startTime', 'clientName', 'clientPhone']);
   if (missing) {
@@ -247,8 +271,8 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     // totalDuration/totalPrice.
     const totalDuration    = services.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
     const totalDurationMin = services.reduce((sum, s) => sum + s.duration, 0);
-    const totalPrice       = services.reduce((sum, s) => sum + s.price, 0);
-    const totalPriceMax    = services.reduce((sum, s) => sum + (rangesEnabled ? (s.priceMax ?? s.price) : s.price), 0);
+    const fullPrice        = services.reduce((sum, s) => sum + s.price, 0);
+    const fullPriceMax     = services.reduce((sum, s) => sum + (rangesEnabled ? (s.priceMax ?? s.price) : s.price), 0);
 
     // Перетин годин салону й графіка майстра (той самий розрахунок, що й
     // GET /available-slots) — замість колишньої перевірки лише вихідного
@@ -270,32 +294,76 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       return sendError(res, 400, ERROR_CODES.BOOKING_IN_PAST, 'Не можна забронювати час, який уже минув', { field: 'date' });
     }
 
-    let client = await Client.findOne({ phone: clientPhone });
+    // Знижка до дня народження (посилання з привітання): дата візиту в
+    // межах терміну, телефон — клієнта-іменинника, ще не використана.
+    let promo = null;
+    if (giftToken !== undefined && giftToken !== null && giftToken !== '') {
+      const check = await checkPromo(req.models, giftToken, { date, phone: clientPhone });
+      if (check.error) {
+        const messages = {
+          PROMO_NOT_FOUND: 'Знижку не знайдено',
+          PROMO_DATE_OUT_OF_RANGE: 'Знижка діє лише на візити в межах свого терміну',
+          PROMO_PHONE_MISMATCH: 'Знижка діє лише для номера телефону, на який її надіслано',
+          PROMO_ALREADY_USED: 'Цю знижку вже використано',
+        };
+        return sendError(res, check.status, ERROR_CODES[check.error], messages[check.error]);
+      }
+      promo = check.greeting;
+    }
+    const discountPercent = promo ? promo.discountPercent : null;
+    const totalPrice    = promo ? applyDiscount(fullPrice, discountPercent) : fullPrice;
+    const totalPriceMax = promo ? applyDiscount(fullPriceMax, discountPercent) : fullPriceMax;
+
+    // Зі знижкою запис іде саме на клієнта-іменинника (телефон уже звірено).
+    let client = promo ? await Client.findById(promo.client) : await Client.findOne({ phone: clientPhone });
     if (!client) {
       client = await Client.create({ name: clientName, phone: clientPhone, email: clientEmail || '' });
     }
 
+    // Одноразовість: атомарно "займаємо" знижку під наперед відомий _id
+    // запису; якщо запис не створиться (слот зайнятий тощо) — звільняємо.
+    const appointmentId = new mongoose.Types.ObjectId();
+    if (promo) {
+      const claimed = await req.models.BirthdayGreeting.findOneAndUpdate(
+        { _id: promo._id, promoAppointment: null },
+        { $set: { promoAppointment: appointmentId } }
+      );
+      if (!claimed) return sendError(res, 409, ERROR_CODES.PROMO_ALREADY_USED, 'Цю знижку вже використано');
+    }
+    const releasePromo = () => (promo
+      ? req.models.BirthdayGreeting.updateOne({ _id: promo._id, promoAppointment: appointmentId }, { $set: { promoAppointment: null } }).catch(() => {})
+      : Promise.resolve());
+
     // Атомарне резервування: лок на (майстер, день) гарантує, що перевірка
     // перекриття й створення запису відбуваються без гонки з паралельним
     // запитом на той самий час (публічним чи адмінським — той самий лок).
-    const lockResult = await withEmployeeDayLock(req.models, employeeId, date, async () => {
-      const conflict = await findScheduleConflict(req.models, { employeeId, dateObj, startTime, totalDuration });
-      if (conflict) return { conflict };
-      const created = await Appointment.create({
-        client: client._id,
-        employee: employeeId,
-        services: serviceIds,
-        date: dateObj,
-        startTime,
-        totalDuration,
-        totalPrice,
-        status: 'Scheduled',
-        preferredLang,
-        source: 'public',
-        tgToken: newTgToken(),
+    let lockResult;
+    try {
+      lockResult = await withEmployeeDayLock(req.models, employeeId, date, async () => {
+        const conflict = await findScheduleConflict(req.models, { employeeId, dateObj, startTime, totalDuration });
+        if (conflict) return { conflict };
+        const created = await Appointment.create({
+          _id: appointmentId,
+          client: client._id,
+          employee: employeeId,
+          services: serviceIds,
+          date: dateObj,
+          startTime,
+          totalDuration,
+          totalPrice,
+          status: 'Scheduled',
+          preferredLang,
+          source: 'public',
+          tgToken: newTgToken(),
+          ...(promo ? { discountPercent, priceBeforeDiscount: fullPrice, birthdayGreeting: promo._id } : {}),
+        });
+        return { conflict: null, appointment: created };
       });
-      return { conflict: null, appointment: created };
-    });
+    } catch (lockErr) {
+      await releasePromo();
+      throw lockErr;
+    }
+    if (lockResult.conflict) await releasePromo();
 
     if (lockResult.conflict === 'break') {
       return sendError(res, 409, ERROR_CODES.EMPLOYEE_ON_BREAK, 'У майстра перерва в цей час, оберіть інший слот');
@@ -327,6 +395,9 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       lang: preferredLang,
       currency: settings?.currency,
       rangesEnabled,
+      discountPercent,
+      priceBeforeDiscount: fullPrice,
+      priceBeforeDiscountMax: fullPriceMax,
     }).catch((mailErr) => {
       console.error('Email не надіслано:', mailErr.message);
     });
@@ -393,6 +464,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
         totalPrice,
         clientName,
         preferredLang,
+        ...(promo ? { discountPercent, priceBeforeDiscount: fullPrice } : {}),
       }
     };
     if (idemDoc) {

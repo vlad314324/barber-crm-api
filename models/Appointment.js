@@ -74,6 +74,11 @@ const appointmentSchema = new mongoose.Schema({
   // екрані успішного бронювання (deep link t.me/<bot>?start=bk_...).
   // Назовні не віддається.
   tgToken: { type: String, select: false, index: { sparse: true } },
+  // Знижка до дня народження (посилання з привітання, routes/bookingRoutes.js):
+  // totalPrice уже зі знижкою, priceBeforeDiscount — сума без неї.
+  discountPercent: { type: Number },
+  priceBeforeDiscount: { type: Number },
+  birthdayGreeting: { type: mongoose.Schema.Types.ObjectId, ref: 'BirthdayGreeting' },
   // Внутрішні коментарі персоналу (адмін/барбер), не видимі клієнту.
   // Append-only лог, а не одне поле — щоб два співробітники не затирали
   // коментарі одне одного через "сліпий" PUT /:id, що перезаписує весь документ.
