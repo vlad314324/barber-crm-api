@@ -77,6 +77,9 @@ const appointmentSchema = new mongoose.Schema({
   // Знижка до дня народження (посилання з привітання, routes/bookingRoutes.js):
   // totalPrice уже зі знижкою, priceBeforeDiscount — сума без неї.
   discountPercent: { type: Number },
+  // Собівартість послуг запису на момент створення/зміни послуг
+  // (utils/serviceCost.js) — для прибутку в аналітиці; лише адміну.
+  totalCost: { type: Number, select: false },
   priceBeforeDiscount: { type: Number },
   birthdayGreeting: { type: mongoose.Schema.Types.ObjectId, ref: 'BirthdayGreeting' },
   // Внутрішні коментарі персоналу (адмін/барбер), не видимі клієнту.

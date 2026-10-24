@@ -15,6 +15,7 @@ const { notifyUserTelegram } = require('../config/telegramBot');
 const { notifyClientTelegram } = require('../config/clientTelegram');
 const { getBarberScope, sameId } = require('../utils/scope');
 const { dayBusy, freeWindowStarts } = require('../utils/freeSlots');
+const { servicesCost } = require('../utils/serviceCost');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -199,6 +200,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       const doc = {
         client: client._id, employee: employee._id, services: resolvedServices.map((s) => s._id),
         date: dateValue, startTime, totalDuration, totalPrice, status, preferredLang,
+        totalCost: await servicesCost(req.models, resolvedServices.map((s) => s._id)),
       };
 
       const id = String(row.id || '').trim();
@@ -355,8 +357,9 @@ router.post('/', async (req, res) => {
     }
 
     const effectiveStatus = status || 'Scheduled';
+    const totalCost = await servicesCost(req.models, services);
     const create = async () => {
-      const newAppointment = new Appointment({ client, employee, services, date, startTime, totalDuration, totalPrice, status });
+      const newAppointment = new Appointment({ client, employee, services, date, startTime, totalDuration, totalPrice, totalCost, status });
       return newAppointment.save();
     };
 
@@ -378,7 +381,10 @@ router.post('/', async (req, res) => {
       saved = lockResult.appointment;
     }
 
-    res.json(saved);
+    // Знімок собівартості — лише для аналітики адміна, у відповідь не йде.
+    const out = saved.toObject();
+    delete out.totalCost;
+    res.json(out);
   } catch (err) {
     if (err.code === 'LOCK_TIMEOUT') {
       return sendError(res, 409, ERROR_CODES.BOOKING_BUSY, 'Забагато одночасних спроб — спробуйте ще раз');
@@ -422,6 +428,9 @@ router.put('/:id', async (req, res) => {
     delete req.body.discountPercent;
     delete req.body.priceBeforeDiscount;
     delete req.body.birthdayGreeting;
+    delete req.body.totalCost;
+    // Змінились послуги — оновлюємо знімок собівартості.
+    if (Array.isArray(req.body.services)) req.body.totalCost = await servicesCost(req.models, req.body.services);
 
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
       const effectiveEmployeeId = req.body.employee || existing.employee;

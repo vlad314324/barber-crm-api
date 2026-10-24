@@ -10,6 +10,7 @@ const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, 
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const mongoose = require('mongoose');
 const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
+const { servicesCost } = require('../utils/serviceCost');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { notifyUserTelegram } = require('../config/telegramBot');
 const { newTgToken, buildClientDeepLink, notifyClientTelegram, isClientLinked } = require('../config/clientTelegram');
@@ -312,6 +313,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     }
     const discountPercent = promo ? promo.discountPercent : null;
     const totalPrice    = promo ? applyDiscount(fullPrice, discountPercent) : fullPrice;
+    const totalCost     = await servicesCost(req.models, serviceIds);
     const totalPriceMax = promo ? applyDiscount(fullPriceMax, discountPercent) : fullPriceMax;
 
     // Зі знижкою запис іде саме на клієнта-іменинника (телефон уже звірено).
@@ -351,6 +353,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
           startTime,
           totalDuration,
           totalPrice,
+          totalCost,
           status: 'Scheduled',
           preferredLang,
           source: 'public',

@@ -4,6 +4,7 @@ const { ERROR_CODES, sendError, handleRouteError } = require('../utils/errorCode
 const requireRole = require('../middleware/requireRole');
 const { computeFunnelAnalytics, parseFunnelDays } = require('../utils/analyticsAggregation');
 const { getBarberScope, ownClientIds } = require('../utils/scope');
+const { appointmentCost } = require('../utils/serviceCost');
 
 // Звіти (Reports.tsx): адмін бачить увесь салон, майстер — лише власну
 // статистику (огляд і прогноз). Воронка сайту й RFM — тільки адмін.
@@ -40,7 +41,13 @@ router.get('/dashboard', async (req, res) => {
     const startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-    const allAppts = await Appointment.find({ ...apptFilter, status: 'Completed' }).populate('services');
+    // Собівартість і прибуток — лише адміну (майстер їх не бачить).
+    const withCost = !isBarber;
+    const allAppts = await Appointment.find({ ...apptFilter, status: 'Completed' })
+      .select(withCost ? '+totalCost' : '')
+      .populate(withCost ? { path: 'services', select: '+cost' } : 'services');
+    const costOf = (appts) => appts.reduce((s, a) => s + appointmentCost(a), 0);
+    const revenueOf = (appts) => appts.reduce((s, a) => s + a.totalPrice, 0);
     const monthAppts = allAppts.filter(a => new Date(a.date) >= startOfMonth);
     const prevAppts = allAppts.filter(a => new Date(a.date) >= startOfPrevMonth && new Date(a.date) <= endOfPrevMonth);
     const totalClients = isBarber
@@ -61,9 +68,11 @@ router.get('/dashboard', async (req, res) => {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
       const appts = allAppts.filter(a => new Date(a.date) >= d && new Date(a.date) <= end);
+      const amount = revenueOf(appts);
       revenueByMonth.push({
         month: d.toLocaleDateString('uk-UA', { month: 'short' }),
-        amount: appts.reduce((s, a) => s + a.totalPrice, 0),
+        amount,
+        ...(withCost ? { cost: costOf(appts), profit: amount - costOf(appts) } : {}),
       });
     }
 
@@ -73,9 +82,14 @@ router.get('/dashboard', async (req, res) => {
       a.services.forEach(s => {
         const name = typeof s === 'object' ? s.name : String(s);
         const price = typeof s === 'object' ? (s.price || 0) : 0;
-        if (!svcMap[name]) svcMap[name] = { name, count: 0, revenue: 0 };
+        if (!svcMap[name]) svcMap[name] = { name, count: 0, revenue: 0, ...(withCost ? { cost: 0, profit: 0 } : {}) };
         svcMap[name].count++;
         svcMap[name].revenue += price;
+        if (withCost) {
+          const cost = typeof s === 'object' ? (s.cost || 0) : 0;
+          svcMap[name].cost += cost;
+          svcMap[name].profit += price - cost;
+        }
       });
     });
     const servicePerformance = Object.values(svcMap)
@@ -93,10 +107,12 @@ router.get('/dashboard', async (req, res) => {
     });
     const empPerformance = employees.map(emp => {
       const appts = apptsByEmployee.get(String(emp._id)) || [];
+      const revenue = revenueOf(appts);
       return {
         name: emp.name,
         appointments: appts.length,
-        revenue: appts.reduce((s, a) => s + a.totalPrice, 0),
+        revenue,
+        ...(withCost ? { profit: revenue - costOf(appts) } : {}),
         rating: emp.rating || 0,
       };
     });
@@ -129,6 +145,21 @@ router.get('/dashboard', async (req, res) => {
       empPerformance: empPerformance.sort((a, b) => b.revenue - a.revenue),
       appointmentsByWeekday,
       appointmentsByStatus,
+      ...(withCost ? (() => {
+        const totalRevenue = revenueOf(allAppts);
+        const totalCost = costOf(allAppts);
+        const monthCost = costOf(monthAppts);
+        const prevProfit = prevRevenue - costOf(prevAppts);
+        const monthProfit = monthRevenue - monthCost;
+        return {
+          totalCost,
+          totalProfit: totalRevenue - totalCost,
+          marginPercent: totalRevenue > 0 ? Number((((totalRevenue - totalCost) / totalRevenue) * 100).toFixed(1)) : 0,
+          monthCost,
+          monthProfit,
+          profitChange: prevProfit > 0 ? Number((((monthProfit - prevProfit) / prevProfit) * 100).toFixed(1)) : 0,
+        };
+      })() : {}),
     });
   } catch (err) {
     handleRouteError(res, err, 'analytics/dashboard');

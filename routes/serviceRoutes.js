@@ -7,6 +7,10 @@ const {
 } = require('../utils/excel');
 const { importUpload, imageUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
+const { parseCost } = require('../utils/serviceCost');
+
+// Собівартість бачить лише адмін.
+const costSelect = (req) => (req.user?.role === 'admin' ? '+cost' : '');
 const storage = require('../utils/storage');
 const { storeImage, InvalidImageError } = require('../utils/images');
 
@@ -26,6 +30,7 @@ const SERVICE_EXPORT_COLUMNS = [
   { header: 'Description', key: 'description' },
   { header: 'Price', key: 'price' },
   { header: 'Price Max', key: 'priceMax' },
+  { header: 'Cost', key: 'cost' },
   { header: 'Duration', key: 'duration' },
   { header: 'Duration Max', key: 'durationMax' },
   { header: 'Category', key: 'category' },
@@ -36,6 +41,7 @@ const SERVICE_IMPORT_COLUMNS = [
   { header: 'Description', key: 'description', aliases: ['Опис'] },
   { header: 'Price', key: 'price', aliases: ['Ціна', 'Вартість'], required: true },
   { header: 'Price Max', key: 'priceMax', aliases: ['Ціна до', 'Максимальна ціна'] },
+  { header: 'Cost', key: 'cost', aliases: ['Собівартість', 'Себестоимость', 'Náklady'] },
   { header: 'Duration', key: 'duration', aliases: ['Тривалість'], required: true },
   { header: 'Duration Max', key: 'durationMax', aliases: ['Тривалість до', 'Максимальна тривалість'] },
   { header: 'Category', key: 'category', aliases: ['Категорія'], required: true },
@@ -45,7 +51,7 @@ const SERVICE_IMPORT_COLUMNS = [
 router.get('/', async (req, res) => {
   const { Service } = req.models;
   try {
-    const services = await Service.find().sort({ category: 1, name: 1 });
+    const services = await Service.find().select(costSelect(req)).sort({ category: 1, name: 1 });
     res.json(services);
   } catch (err) {
     handleRouteError(res, err, 'services/list');
@@ -56,11 +62,11 @@ router.get('/', async (req, res) => {
 router.get('/export', requireRole('admin'), async (req, res) => {
   const { Service } = req.models;
   try {
-    const services = await Service.find().sort({ category: 1, name: 1 });
+    const services = await Service.find().select('+cost').sort({ category: 1, name: 1 });
     const rows = services.map((s) => ({
       id: String(s._id),
       name: s.name, description: s.description,
-      price: s.price, priceMax: s.priceMax, duration: s.duration, durationMax: s.durationMax,
+      price: s.price, priceMax: s.priceMax, cost: s.cost || 0, duration: s.duration, durationMax: s.durationMax,
       category: s.category,
       isAvailable: s.isAvailable ? 'Yes' : 'No',
     }));
@@ -116,6 +122,13 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
 
       const isAvailable = /^(yes|так|true|1)$/i.test(String(row.isAvailable ?? 'Yes').trim());
       const doc = { name, description, price, duration, category, isAvailable };
+      // Порожня клітинка собівартості не затирає вже збережену.
+      const costRaw = String(row.cost ?? '').trim();
+      if (costRaw) {
+        const cost = parseFlexibleNumber(costRaw);
+        if (Number.isNaN(cost) || cost < 0) throw new Error('Cost має бути невідʼємним числом');
+        doc.cost = cost;
+      }
 
       // Колонки Price Max/Duration Max ігноруємо повністю, поки опція
       // діапазонів вимкнена в Налаштуваннях — незалежно від їх вмісту у
@@ -156,7 +169,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
 router.get('/:id', async (req, res) => {
   const { Service } = req.models;
   try {
-    const service = await Service.findById(req.params.id);
+    const service = await Service.findById(req.params.id).select(costSelect(req));
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
     res.json(service);
   } catch (err) {
@@ -190,6 +203,12 @@ router.post('/', requireRole('admin'), async (req, res) => {
       if (body.durationMax !== undefined && body.durationMax !== null && body.durationMax !== '' && Number(body.durationMax) < Number(body.duration)) {
         return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Максимальна тривалість не може бути меншою за базову тривалість', { field: 'durationMax' });
       }
+    }
+
+    if (body.cost !== undefined) {
+      const cost = parseCost(body.cost);
+      if (cost === null) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Собівартість має бути невідʼємним числом', { field: 'cost' });
+      body.cost = cost;
     }
 
     const service = new Service(body);
@@ -229,9 +248,15 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
       }
     }
 
+    if (body.cost !== undefined) {
+      const cost = parseCost(body.cost);
+      if (cost === null) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Собівартість має бути невідʼємним числом', { field: 'cost' });
+      body.cost = cost;
+    }
+
     const service = await Service.findByIdAndUpdate(
       req.params.id, body, { new: true, runValidators: true }
-    );
+    ).select('+cost');
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
     res.json(service);
   } catch (err) {
