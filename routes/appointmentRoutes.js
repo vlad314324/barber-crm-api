@@ -16,6 +16,8 @@ const { notifyClientTelegram } = require('../config/clientTelegram');
 const { getBarberScope, sameId } = require('../utils/scope');
 const { dayBusy, freeWindowStarts } = require('../utils/freeSlots');
 const { servicesCost } = require('../utils/serviceCost');
+const { prepOf, servicesPrep, parsePrep } = require('../utils/prepTime');
+const { effectiveServices } = require('../utils/employeePricing');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -182,8 +184,10 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       // прайс-листом цього салону.
       const rawDuration = String(row.totalDuration ?? '').trim();
       const rawPrice = String(row.totalPrice ?? '').trim();
-      const totalDuration = rawDuration ? parseFlexibleNumber(rawDuration) : resolvedServices.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
-      const totalPrice = rawPrice ? parseFlexibleNumber(rawPrice) : resolvedServices.reduce((sum, s) => sum + s.price, 0);
+      // Авто-суми — за цінами й тривалістю саме цього майстра.
+      const empServices = effectiveServices(resolvedServices, employee);
+      const totalDuration = rawDuration ? parseFlexibleNumber(rawDuration) : empServices.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
+      const totalPrice = rawPrice ? parseFlexibleNumber(rawPrice) : empServices.reduce((sum, s) => sum + s.price, 0);
       if (Number.isNaN(totalDuration) || Number.isNaN(totalPrice)) throw new Error('Total Duration і Total Price мають бути числами');
       if (totalDuration <= 0) throw new Error('Total Duration має бути більшою за нуль');
 
@@ -200,6 +204,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       const doc = {
         client: client._id, employee: employee._id, services: resolvedServices.map((s) => s._id),
         date: dateValue, startTime, totalDuration, totalPrice, status, preferredLang,
+        prepTime: prepOf(resolvedServices),
         totalCost: await servicesCost(req.models, resolvedServices.map((s) => s._id)),
       };
 
@@ -225,7 +230,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       } else {
         const conflict = await withEmployeeDayLock(req.models, employee._id, dateValue, async () => {
           const overlap = await findScheduleConflict(req.models, {
-            employeeId: employee._id, dateObj: dateValue, startTime, totalDuration,
+            employeeId: employee._id, dateObj: dateValue, startTime, totalDuration, prepTime: doc.prepTime,
             excludeAppointmentId: id || undefined,
           });
           if (!overlap) await writeRow();
@@ -342,6 +347,11 @@ router.post('/', async (req, res) => {
   if (Number(totalDuration) <= 0) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Тривалість має бути більшою за нуль', { field: 'totalDuration' });
   }
+  // Підготовка після візиту: з форми (можна змінити вручну) або з послуг.
+  const prepInput = parsePrep(req.body.prepTime);
+  if (prepInput === null) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Час на підготовку має бути цілим числом хвилин від 0 до 240', { field: 'prepTime' });
+  }
 
   try {
     // Майстер записує лише на себе.
@@ -358,8 +368,9 @@ router.post('/', async (req, res) => {
 
     const effectiveStatus = status || 'Scheduled';
     const totalCost = await servicesCost(req.models, services);
+    const prepTime = prepInput ?? await servicesPrep(req.models, services);
     const create = async () => {
-      const newAppointment = new Appointment({ client, employee, services, date, startTime, totalDuration, totalPrice, totalCost, status });
+      const newAppointment = new Appointment({ client, employee, services, date, startTime, totalDuration, prepTime, totalPrice, totalCost, status });
       return newAppointment.save();
     };
 
@@ -368,7 +379,7 @@ router.post('/', async (req, res) => {
       saved = await create();
     } else {
       const lockResult = await withEmployeeDayLock(req.models, employee, date, async () => {
-        const conflict = await findScheduleConflict(req.models, { employeeId: employee, dateObj: new Date(date), startTime, totalDuration });
+        const conflict = await findScheduleConflict(req.models, { employeeId: employee, dateObj: new Date(date), startTime, totalDuration, prepTime });
         if (conflict) return { conflict };
         return { conflict: null, appointment: await create() };
       });
@@ -407,6 +418,10 @@ router.put('/:id', async (req, res) => {
   if (req.body.totalDuration !== undefined && Number(req.body.totalDuration) <= 0) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Тривалість має бути більшою за нуль', { field: 'totalDuration' });
   }
+  const prepInput = parsePrep(req.body.prepTime);
+  if (prepInput === null) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Час на підготовку має бути цілим числом хвилин від 0 до 240', { field: 'prepTime' });
+  }
   try {
     const existing = await Appointment.findById(req.params.id);
     if (!existing) return sendError(res, 404, ERROR_CODES.APPOINTMENT_NOT_FOUND, 'Appointment not found');
@@ -431,6 +446,9 @@ router.put('/:id', async (req, res) => {
     delete req.body.totalCost;
     // Змінились послуги — оновлюємо знімок собівартості.
     if (Array.isArray(req.body.services)) req.body.totalCost = await servicesCost(req.models, req.body.services);
+    // Підготовка: явне значення з форми, інакше — з нових послуг.
+    if (prepInput !== undefined) req.body.prepTime = prepInput;
+    else if (Array.isArray(req.body.services)) req.body.prepTime = await servicesPrep(req.models, req.body.services);
 
     if (Array.isArray(req.body.services) && req.body.services.length > 0) {
       const effectiveEmployeeId = req.body.employee || existing.employee;
@@ -445,7 +463,7 @@ router.put('/:id', async (req, res) => {
     // Перевірку перекриття робимо лише тоді, коли тіло реально чіпає
     // розклад запису (дату/час/майстра/тривалість) — і не для скасування,
     // бо звільнення слоту конфлікту не створює.
-    const touchesSchedule = ['date', 'startTime', 'employee', 'totalDuration'].some((f) => req.body[f] !== undefined);
+    const touchesSchedule = ['date', 'startTime', 'employee', 'totalDuration', 'prepTime'].some((f) => req.body[f] !== undefined);
     const effectiveStatus = req.body.status !== undefined ? req.body.status : existing.status;
 
     // Перенесення запису на іншу дату/час зсуває вікна нагадувань (24 год
@@ -464,11 +482,12 @@ router.put('/:id', async (req, res) => {
       const effectiveDate = req.body.date ?? existing.date;
       const effectiveStartTime = req.body.startTime ?? existing.startTime;
       const effectiveDuration = req.body.totalDuration ?? existing.totalDuration;
+      const effectivePrep = req.body.prepTime ?? existing.prepTime ?? 0;
 
       const lockResult = await withEmployeeDayLock(req.models, effectiveEmployeeId, effectiveDate, async () => {
         const conflict = await findScheduleConflict(req.models, {
           employeeId: effectiveEmployeeId, dateObj: new Date(effectiveDate),
-          startTime: effectiveStartTime, totalDuration: effectiveDuration,
+          startTime: effectiveStartTime, totalDuration: effectiveDuration, prepTime: effectivePrep,
           excludeAppointmentId: req.params.id,
         });
         if (conflict) return { conflict };

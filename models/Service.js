@@ -60,6 +60,13 @@ const serviceSchema = new mongoose.Schema({
       message: 'Максимальна тривалість (durationMax) не може бути меншою за базову тривалість (duration)',
     },
   },
+  // Час на підготовку робочого місця після послуги, хв (utils/prepTime.js):
+  // клієнт бачить лише duration, календар резервує duration + prepTime.
+  prepTime: {
+    type: Number,
+    default: 0,
+    min: [0, 'Час на підготовку не може бути відʼємним'],
+  },
   category: {
     type: String,
     required: true,

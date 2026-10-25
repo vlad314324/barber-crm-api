@@ -5,6 +5,7 @@ const requireRole = require('../middleware/requireRole');
 const { computeFunnelAnalytics, parseFunnelDays } = require('../utils/analyticsAggregation');
 const { getBarberScope, ownClientIds } = require('../utils/scope');
 const { appointmentCost } = require('../utils/serviceCost');
+const { overrideFor } = require('../utils/employeePricing');
 
 // Звіти (Reports.tsx): адмін бачить увесь салон, майстер — лише власну
 // статистику (огляд і прогноз). Воронка сайту й RFM — тільки адмін.
@@ -77,11 +78,14 @@ router.get('/dashboard', async (req, res) => {
     }
 
     // Service performance
+    // Ціна послуги — індивідуальна ціна майстра запису, якщо задана.
     const svcMap = {};
+    const empById = new Map(employees.map((e) => [String(e._id), e]));
     allAppts.forEach(a => {
+      const emp = empById.get(String(a.employee));
       a.services.forEach(s => {
         const name = typeof s === 'object' ? s.name : String(s);
-        const price = typeof s === 'object' ? (s.price || 0) : 0;
+        const price = typeof s === 'object' ? (overrideFor(emp, s._id)?.price ?? s.price ?? 0) : 0;
         if (!svcMap[name]) svcMap[name] = { name, count: 0, revenue: 0, ...(withCost ? { cost: 0, profit: 0 } : {}) };
         svcMap[name].count++;
         svcMap[name].revenue += price;

@@ -1,4 +1,5 @@
 const express = require('express');
+const { validateOverrides } = require('../utils/employeePricing');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, resolveAlias, ROLE_ALIASES, MAX_IMPORT_ROWS } = require('../utils/excel');
@@ -260,6 +261,29 @@ router.post('/', requireRole('admin'), async (req, res) => {
       }
     }
 
+
+    // Індивідуальні ціни майстра: лише для існуючих послуг, які він виконує
+    // (порожній services = усі послуги).
+    if (req.body.serviceOverrides !== undefined || Array.isArray(req.body.services)) {
+      const current = null;
+      const services = Array.isArray(req.body.services) ? req.body.services : (current?.services || []);
+      const rawOverrides = req.body.serviceOverrides !== undefined ? req.body.serviceOverrides : (current?.serviceOverrides || []);
+      const allowedIds = services.length > 0
+        ? services
+        : (await Service.find().select('_id')).map((s) => s._id);
+      const existingIds = (await Service.find({ _id: { $in: allowedIds } }).select('_id')).map((s) => s._id);
+      const allowed = new Set(existingIds.map(String));
+      // Явно передані ціни для чужої послуги — помилка; збережені ціни
+      // послуг, які прибрали з майстра, — просто відкидаються.
+      const fromBody = req.body.serviceOverrides !== undefined;
+      const { overrides, error, field } = validateOverrides(
+        fromBody ? rawOverrides : rawOverrides.filter((o) => allowed.has(String(o.service))),
+        existingIds,
+      );
+      if (error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, error, { field });
+      req.body.serviceOverrides = overrides;
+    }
+
     const employee = new Employee(req.body);
     await employee.save();
     res.status(201).json(employee);
@@ -276,6 +300,29 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
       if (found.length !== req.body.services.length) {
         return sendError(res, 400, ERROR_CODES.INVALID_SERVICE, 'Одну або декілька обраних послуг не знайдено');
       }
+    }
+
+
+    // Індивідуальні ціни майстра: лише для існуючих послуг, які він виконує
+    // (порожній services = усі послуги).
+    if (req.body.serviceOverrides !== undefined || Array.isArray(req.body.services)) {
+      const current = await Employee.findById(req.params.id).select('services serviceOverrides');
+      const services = Array.isArray(req.body.services) ? req.body.services : (current?.services || []);
+      const rawOverrides = req.body.serviceOverrides !== undefined ? req.body.serviceOverrides : (current?.serviceOverrides || []);
+      const allowedIds = services.length > 0
+        ? services
+        : (await Service.find().select('_id')).map((s) => s._id);
+      const existingIds = (await Service.find({ _id: { $in: allowedIds } }).select('_id')).map((s) => s._id);
+      const allowed = new Set(existingIds.map(String));
+      // Явно передані ціни для чужої послуги — помилка; збережені ціни
+      // послуг, які прибрали з майстра, — просто відкидаються.
+      const fromBody = req.body.serviceOverrides !== undefined;
+      const { overrides, error, field } = validateOverrides(
+        fromBody ? rawOverrides : rawOverrides.filter((o) => allowed.has(String(o.service))),
+        existingIds,
+      );
+      if (error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, error, { field });
+      req.body.serviceOverrides = overrides;
     }
 
     const employee = await Employee.findByIdAndUpdate(

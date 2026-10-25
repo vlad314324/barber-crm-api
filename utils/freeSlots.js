@@ -23,18 +23,21 @@ async function dayBusy(models, settings, employee, date) {
     status: { $nin: ['Cancelled'] },
   });
 
+  // Запис блокує час разом із підготовкою після нього (utils/prepTime.js).
   const blocked = existing.map((apt) => {
     const [h, m] = apt.startTime.split(':').map(Number);
     const start = h * 60 + m;
-    return { start, end: start + (apt.totalDuration || 30) };
-  }).concat(await breakIntervals(models, employee._id, date));
+    return { start, end: start + (apt.totalDuration || 30) + (apt.prepTime || 0), kind: 'appointment' };
+  }).concat((await breakIntervals(models, employee._id, date)).map((b) => ({ ...b, kind: 'break' })));
 
   return { window, blocked };
 }
 
 // Старти кожні 30 хв, що не потрапляють у зайнятий інтервал; з
-// requiredDuration — лише ті, під якими є суцільний вільний час.
-function slotStarts(window, blocked, requiredDuration = null) {
+// requiredDuration — лише ті, під якими є суцільний вільний час. prep —
+// підготовка після нового запису: не має налазити на інші записи, але
+// може виходити за закриття й на перерву.
+function slotStarts(window, blocked, requiredDuration = null, prep = 0) {
   const { fromMinutes, toMinutes } = window;
   const out = [];
   for (let start = fromMinutes; start < toMinutes; start += 30) {
@@ -42,7 +45,7 @@ function slotStarts(window, blocked, requiredDuration = null) {
     if (requiredDuration) {
       const end = start + requiredDuration;
       if (end > toMinutes) continue;
-      if (blocked.some((b) => start < b.end && b.start < end)) continue;
+      if (blocked.some((b) => start < b.end && b.start < (b.kind === 'break' ? end : end + prep))) continue;
     }
     out.push(fmt(start));
   }

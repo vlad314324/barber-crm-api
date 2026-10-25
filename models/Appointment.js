@@ -32,6 +32,9 @@ const appointmentSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  // Підготовка після візиту, хв (знімок із послуг, utils/prepTime.js).
+  // Клієнт її не бачить; у календарі запис займає totalDuration + prepTime.
+  prepTime: { type: Number, default: 0, min: 0 },
   status: {
     type: String,
     enum: ['Scheduled', 'Completed', 'Cancelled', 'No-show'],

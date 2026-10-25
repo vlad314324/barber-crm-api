@@ -14,6 +14,16 @@ const employeeTranslationSchema = new mongoose.Schema({
   customRoleLabel: { type: String, default: '', trim: true },
 }, { _id: false });
 
+// Індивідуальна ціна/тривалість послуги для цього майстра (utils/employeePricing.js).
+// Порожнє поле — базове значення послуги.
+const serviceOverrideSchema = new mongoose.Schema({
+  service:     { type: mongoose.Schema.Types.ObjectId, ref: 'Service', required: true },
+  price:       { type: Number, min: 0.01 },
+  priceMax:    { type: Number, min: 0.01 },
+  duration:    { type: Number, min: 1 },
+  durationMax: { type: Number, min: 1 },
+}, { _id: false });
+
 const employeeSchema = new mongoose.Schema({
   name:        { type: String, required: true },
   phone:       { type: String, required: true },
@@ -33,6 +43,7 @@ const employeeSchema = new mongoose.Schema({
     default: () => new Map(),
   },
   services:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
+  serviceOverrides: { type: [serviceOverrideSchema], default: [] },
   rating:      { type: Number, default: 0 },
   reviewCount: { type: Number, default: 0 },
   joinDate:    { type: Date, default: Date.now },

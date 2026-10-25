@@ -4,6 +4,8 @@ const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRouteError } = require('../utils/errorCodes');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { findScheduleConflict } = require('../utils/appointmentOverlap');
+const { prepOf } = require('../utils/prepTime');
+const { effectiveServices } = require('../utils/employeePricing');
 const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon } = require('../utils/scheduleWindow');
@@ -28,15 +30,17 @@ router.get('/services', async (req, res) => {
     // публічній сторінці бронювання взагалі, щоб вона показувала й рахувала
     // все як звичайну послугу з одним числом, навіть якщо в базі лишились
     // раніше введені (і просто прихожі) значення діапазону.
-    const payload = rangesEnabled
-      ? services
-      : services.map((s) => {
-          // flattenMaps — інакше translations лишається Map і в JSON стає {}
-          const obj = s.toObject({ flattenMaps: true });
-          delete obj.priceMax;
-          delete obj.durationMax;
-          return obj;
-        });
+    // Час на підготовку — внутрішня кухня майстра, клієнту не віддаємо.
+    const payload = services.map((s) => {
+      // flattenMaps — інакше translations лишається Map і в JSON стає {}
+      const obj = s.toObject({ flattenMaps: true });
+      delete obj.prepTime;
+      if (!rangesEnabled) {
+        delete obj.priceMax;
+        delete obj.durationMax;
+      }
+      return obj;
+    });
     res.json(payload);
   } catch (err) {
     handleRouteError(res, err, 'booking/services');
@@ -124,7 +128,7 @@ router.get('/employees', async (req, res) => {
   const { Employee } = req.models;
   try {
     const employees = await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } })
-      .select('name role customRoleLabel bio specialties translations services');
+      .select('name role customRoleLabel bio specialties translations services serviceOverrides');
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'booking/employees');
@@ -134,7 +138,7 @@ router.get('/employees', async (req, res) => {
 // GET /api/:salonSlug/booking/available-slots?employeeId=...&date=...
 router.get('/available-slots', async (req, res) => {
   const { Settings, Employee } = req.models;
-  const { employeeId, date, durationMinutes } = req.query;
+  const { employeeId, date, durationMinutes, serviceIds } = req.query;
   const missing = firstMissingField(req.query, ['employeeId', 'date']);
   if (missing) {
     return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, `Поле "${missing}" обовʼязкове`, { field: missing });
@@ -181,7 +185,15 @@ router.get('/available-slots', async (req, res) => {
       return res.json({ date, employeeId, availableSlots: [], closed: true });
     }
 
-    const availableSlots = slotStarts(window, blocked, requiredDuration);
+    // Необов'язковий serviceIds (через кому) — щоб врахувати час на
+    // підготовку після нового запису (його значення клієнту не віддаються).
+    let prep = 0;
+    if (requiredDuration && typeof serviceIds === 'string' && serviceIds) {
+      const ids = serviceIds.split(',').filter((id) => mongoose.isValidObjectId(id)).slice(0, 50);
+      if (ids.length) prep = prepOf(await req.models.Service.find({ _id: { $in: ids } }).select('prepTime'));
+    }
+
+    const availableSlots = slotStarts(window, blocked, requiredDuration, prep);
     res.json({ date, employeeId, availableSlots, closed: false });
   } catch (err) {
     handleRouteError(res, err, 'booking/available-slots');
@@ -255,13 +267,15 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     // Публічний ендпоінт — послуга, вимкнена з каталогу (isAvailable:false),
     // не повинна бути бронювальною напряму через API, навіть якщо її ще не
     // прибрали з полів форми на клієнті.
-    const services = await Service.find({ _id: { $in: serviceIds }, isAvailable: true });
-    if (services.length !== serviceIds.length) {
+    const baseServices = await Service.find({ _id: { $in: serviceIds }, isAvailable: true });
+    if (baseServices.length !== serviceIds.length) {
       return sendError(res, 400, ERROR_CODES.INVALID_SERVICE, 'Одну або декілька обраних послуг не знайдено');
     }
     if (!canEmployeePerformServices(employee, serviceIds)) {
       return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
     }
+    // Ціна й тривалість — цього майстра (індивідуальні, якщо задані).
+    const services = effectiveServices(baseServices, employee);
 
     // totalDuration — сума МАКСИМАЛЬНИХ тривалостей (коли діапазони
     // увімкнені) — саме це резервується в календарі, щоб виключити
@@ -272,6 +286,8 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     // totalDuration/totalPrice.
     const totalDuration    = services.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
     const totalDurationMin = services.reduce((sum, s) => sum + s.duration, 0);
+    // Підготовка після візиту — лише в календарі майстра (клієнт бачить totalDuration).
+    const prepTime         = prepOf(services);
     const fullPrice        = services.reduce((sum, s) => sum + s.price, 0);
     const fullPriceMax     = services.reduce((sum, s) => sum + (rangesEnabled ? (s.priceMax ?? s.price) : s.price), 0);
 
@@ -342,7 +358,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     let lockResult;
     try {
       lockResult = await withEmployeeDayLock(req.models, employeeId, date, async () => {
-        const conflict = await findScheduleConflict(req.models, { employeeId, dateObj, startTime, totalDuration });
+        const conflict = await findScheduleConflict(req.models, { employeeId, dateObj, startTime, totalDuration, prepTime });
         if (conflict) return { conflict };
         const created = await Appointment.create({
           _id: appointmentId,
@@ -352,6 +368,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
           date: dateObj,
           startTime,
           totalDuration,
+          prepTime,
           totalPrice,
           totalCost,
           status: 'Scheduled',
@@ -386,7 +403,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       // Назви послуг — перекладом мовою клієнта (як на сторінці бронювання),
       // якщо салон його задав; інакше базова назва.
       services: services.map((s) => ({
-        name: s.translations?.get?.(preferredLang)?.name?.trim() || s.name,
+        name: s.translations?.[preferredLang]?.name?.trim() || s.name,
         price: s.price, priceMax: s.priceMax, duration: s.duration, durationMax: s.durationMax,
       })),
       date,

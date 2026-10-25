@@ -8,6 +8,7 @@ const {
 const { importUpload, imageUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { parseCost } = require('../utils/serviceCost');
+const { parsePrep } = require('../utils/prepTime');
 
 // Собівартість бачить лише адмін.
 const costSelect = (req) => (req.user?.role === 'admin' ? '+cost' : '');
@@ -33,6 +34,7 @@ const SERVICE_EXPORT_COLUMNS = [
   { header: 'Cost', key: 'cost' },
   { header: 'Duration', key: 'duration' },
   { header: 'Duration Max', key: 'durationMax' },
+  { header: 'Prep Time', key: 'prepTime' },
   { header: 'Category', key: 'category' },
   { header: 'Available', key: 'isAvailable' },
 ];
@@ -44,6 +46,7 @@ const SERVICE_IMPORT_COLUMNS = [
   { header: 'Cost', key: 'cost', aliases: ['Собівартість', 'Себестоимость', 'Náklady'] },
   { header: 'Duration', key: 'duration', aliases: ['Тривалість'], required: true },
   { header: 'Duration Max', key: 'durationMax', aliases: ['Тривалість до', 'Максимальна тривалість'] },
+  { header: 'Prep Time', key: 'prepTime', aliases: ['Підготовка', 'Час на підготовку'] },
   { header: 'Category', key: 'category', aliases: ['Категорія'], required: true },
   { header: 'Available', key: 'isAvailable', aliases: ['Доступна', 'Доступність'] },
 ];
@@ -52,7 +55,22 @@ router.get('/', async (req, res) => {
   const { Service } = req.models;
   try {
     const services = await Service.find().select(costSelect(req)).sort({ category: 1, name: 1 });
-    res.json(services);
+    // Діапазон індивідуальних цін/тривалостей майстрів — для картки послуги.
+    const employees = await req.models.Employee.find({ isActive: { $ne: false }, 'serviceOverrides.0': { $exists: true } }).select('serviceOverrides');
+    res.json(services.map((s) => {
+      const obj = s.toObject({ flattenMaps: true });
+      const rows = employees.map((e) => e.serviceOverrides.find((o) => String(o.service) === String(s._id))).filter(Boolean);
+      if (rows.length) {
+        const prices = rows.map((o) => o.price ?? s.price).concat(s.price);
+        const durations = rows.map((o) => o.duration ?? s.duration).concat(s.duration);
+        obj.employeePrices = {
+          count: rows.length,
+          minPrice: Math.min(...prices), maxPrice: Math.max(...prices),
+          minDuration: Math.min(...durations), maxDuration: Math.max(...durations),
+        };
+      }
+      return obj;
+    }));
   } catch (err) {
     handleRouteError(res, err, 'services/list');
   }
@@ -66,7 +84,7 @@ router.get('/export', requireRole('admin'), async (req, res) => {
     const rows = services.map((s) => ({
       id: String(s._id),
       name: s.name, description: s.description,
-      price: s.price, priceMax: s.priceMax, cost: s.cost || 0, duration: s.duration, durationMax: s.durationMax,
+      price: s.price, priceMax: s.priceMax, cost: s.cost || 0, duration: s.duration, durationMax: s.durationMax, prepTime: s.prepTime || 0,
       category: s.category,
       isAvailable: s.isAvailable ? 'Yes' : 'No',
     }));
@@ -128,6 +146,12 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
         const cost = parseFlexibleNumber(costRaw);
         if (Number.isNaN(cost) || cost < 0) throw new Error('Cost має бути невідʼємним числом');
         doc.cost = cost;
+      }
+      const prepRaw = String(row.prepTime ?? '').trim();
+      if (prepRaw) {
+        const prep = parsePrep(parseFlexibleNumber(prepRaw));
+        if (prep === null) throw new Error('Prep Time має бути цілим числом хвилин від 0 до 240');
+        doc.prepTime = prep;
       }
 
       // Колонки Price Max/Duration Max ігноруємо повністю, поки опція
@@ -210,6 +234,11 @@ router.post('/', requireRole('admin'), async (req, res) => {
       if (cost === null) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Собівартість має бути невідʼємним числом', { field: 'cost' });
       body.cost = cost;
     }
+    if (body.prepTime !== undefined) {
+      const prep = parsePrep(body.prepTime);
+      if (prep === null) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Час на підготовку має бути цілим числом хвилин від 0 до 240', { field: 'prepTime' });
+      body.prepTime = prep;
+    }
 
     const service = new Service(body);
     await service.save();
@@ -252,6 +281,11 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
       const cost = parseCost(body.cost);
       if (cost === null) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Собівартість має бути невідʼємним числом', { field: 'cost' });
       body.cost = cost;
+    }
+    if (body.prepTime !== undefined) {
+      const prep = parsePrep(body.prepTime);
+      if (prep === null) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Час на підготовку має бути цілим числом хвилин від 0 до 240', { field: 'prepTime' });
+      body.prepTime = prep;
     }
 
     const service = await Service.findByIdAndUpdate(
