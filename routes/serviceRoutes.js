@@ -9,6 +9,7 @@ const { importUpload, imageUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
 const { parseCost } = require('../utils/serviceCost');
 const { parsePrep } = require('../utils/prepTime');
+const { validateAddonConfig, detachParent } = require('../utils/addons');
 
 // Собівартість бачить лише адмін.
 const costSelect = (req) => (req.user?.role === 'admin' ? '+cost' : '');
@@ -35,6 +36,8 @@ const SERVICE_EXPORT_COLUMNS = [
   { header: 'Duration', key: 'duration' },
   { header: 'Duration Max', key: 'durationMax' },
   { header: 'Prep Time', key: 'prepTime' },
+  { header: 'Add-on', key: 'isAddon' },
+  { header: 'Add-on For', key: 'addonFor' },
   { header: 'Category', key: 'category' },
   { header: 'Available', key: 'isAvailable' },
 ];
@@ -47,6 +50,8 @@ const SERVICE_IMPORT_COLUMNS = [
   { header: 'Duration', key: 'duration', aliases: ['Тривалість'], required: true },
   { header: 'Duration Max', key: 'durationMax', aliases: ['Тривалість до', 'Максимальна тривалість'] },
   { header: 'Prep Time', key: 'prepTime', aliases: ['Підготовка', 'Час на підготовку'] },
+  { header: 'Add-on', key: 'isAddon', aliases: ['Додаткова'] },
+  { header: 'Add-on For', key: 'addonFor', aliases: ['Додається до'] },
   { header: 'Category', key: 'category', aliases: ['Категорія'], required: true },
   { header: 'Available', key: 'isAvailable', aliases: ['Доступна', 'Доступність'] },
 ];
@@ -81,10 +86,13 @@ router.get('/export', requireRole('admin'), async (req, res) => {
   const { Service } = req.models;
   try {
     const services = await Service.find().select('+cost').sort({ category: 1, name: 1 });
+    const nameById = new Map(services.map((s) => [String(s._id), s.name]));
     const rows = services.map((s) => ({
       id: String(s._id),
       name: s.name, description: s.description,
       price: s.price, priceMax: s.priceMax, cost: s.cost || 0, duration: s.duration, durationMax: s.durationMax, prepTime: s.prepTime || 0,
+      isAddon: s.isAddon ? 'Yes' : 'No',
+      addonFor: (s.addonFor || []).map((id) => nameById.get(String(id))).filter(Boolean).join(', '),
       category: s.category,
       isAvailable: s.isAvailable ? 'Yes' : 'No',
     }));
@@ -119,6 +127,8 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
 
   let created = 0, updated = 0, failed = 0;
   const errors = [];
+  // Додаткові: основні можуть іти в файлі пізніше — зв'язуємо після всіх рядків.
+  const addonLinks = [];
 
   for (let i = 0; i < rows.length; i++) {
     const rowNum = i + 2;
@@ -173,6 +183,13 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
         if (durationMax !== undefined) doc.durationMax = durationMax;
       }
 
+      const addonRaw = String(row.isAddon ?? '').trim();
+      if (addonRaw) {
+        doc.isAddon = /^(yes|так|true|1)$/i.test(addonRaw);
+        if (!doc.isAddon) doc.addonFor = [];
+        else addonLinks.push({ rowNum, name, parents: String(row.addonFor || '').split(',').map((x) => x.trim()).filter(Boolean) });
+      }
+
       const existing = await Service.findOne({ name });
       if (existing) {
         await Service.updateOne({ _id: existing._id }, doc, { runValidators: true });
@@ -185,6 +202,18 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       failed++;
       errors.push({ row: rowNum, message: err.message || 'Помилка обробки рядка' });
     }
+  }
+
+  for (const link of addonLinks) {
+    const parents = await Service.find({ name: { $in: link.parents }, isAddon: { $ne: true } }).select('_id name');
+    if (parents.length === 0) {
+      failed++;
+      errors.push({ row: link.rowNum, message: `Для додаткової послуги "${link.name}" не знайдено основних (колонка "Add-on For")` });
+      await Service.updateOne({ name: link.name }, { isAddon: false, addonFor: [] });
+      continue;
+    }
+    const svc = await Service.findOneAndUpdate({ name: link.name }, { addonFor: parents.map((x) => x._id) });
+    if (svc) await detachParent(req.models, svc._id);
   }
 
   res.json({ created, updated, failed, errors });
@@ -240,6 +269,9 @@ router.post('/', requireRole('admin'), async (req, res) => {
       body.prepTime = prep;
     }
 
+    const addonCheck = await validateAddonConfig(req.models, body, null);
+    if (addonCheck.error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, addonCheck.error, { field: 'addonFor' });
+
     const service = new Service(body);
     await service.save();
     res.status(201).json(service);
@@ -288,9 +320,16 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
       body.prepTime = prep;
     }
 
+    const current = await Service.findById(req.params.id).select('isAddon addonFor');
+    if (!current) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
+    const addonCheck = await validateAddonConfig(req.models, body, req.params.id, current);
+    if (addonCheck.error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, addonCheck.error, { field: 'addonFor' });
+
     const service = await Service.findByIdAndUpdate(
       req.params.id, body, { new: true, runValidators: true }
     ).select('+cost');
+    // Стала додатковою — більше не може бути основною для інших.
+    if (service?.isAddon && !current.isAddon) await detachParent(req.models, service._id);
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
     res.json(service);
   } catch (err) {
@@ -316,6 +355,7 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     }
 
     await service.deleteOne();
+    await detachParent(req.models, service._id);
     await storage.deleteObject(service.imageKey);
     res.json({ msg: 'Послугу видалено' });
   } catch (err) {

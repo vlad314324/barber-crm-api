@@ -67,6 +67,11 @@ const serviceSchema = new mongoose.Schema({
     default: 0,
     min: [0, 'Час на підготовку не може бути відʼємним'],
   },
+  // Додаткова послуга (utils/addons.js): бронюється лише разом з однією з
+  // основних addonFor (напр. "Укладання" до "Стрижки"), окремо в списку
+  // сторінки бронювання не показується.
+  isAddon: { type: Boolean, default: false },
+  addonFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
   category: {
     type: String,
     required: true,

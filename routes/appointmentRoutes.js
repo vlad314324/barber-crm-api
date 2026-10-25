@@ -18,6 +18,7 @@ const { dayBusy, freeWindowStarts } = require('../utils/freeSlots');
 const { servicesCost } = require('../utils/serviceCost');
 const { prepOf, servicesPrep, parsePrep } = require('../utils/prepTime');
 const { effectiveServices } = require('../utils/employeePricing');
+const { checkAndOrderIds, addonsHaveParent, orderWithAddons } = require('../utils/addons');
 
 const APPOINTMENT_EXPORT_COLUMNS = [
   { header: 'ID', key: 'id' },
@@ -171,6 +172,8 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
         if (!svc) throw new Error(`Послугу "${svcName}" не знайдено`);
         resolvedServices.push(svc);
       }
+      if (!addonsHaveParent(resolvedServices)) throw new Error('Додаткову послугу можна записати лише разом з основною');
+      resolvedServices.splice(0, resolvedServices.length, ...orderWithAddons(resolvedServices));
 
       const dateValue = parseFlexibleDate(row.date);
       if (Number.isNaN(dateValue.getTime())) throw new Error(`Некоректна дата: "${row.date}"`);
@@ -330,7 +333,8 @@ router.get('/:id', async (req, res) => {
 // POST new appointment
 router.post('/', async (req, res) => {
   const { Appointment, Employee } = req.models;
-  const { client, employee, services, date, startTime, totalDuration, totalPrice, status } = req.body;
+  const { client, employee, date, startTime, totalDuration, totalPrice, status } = req.body;
+  let { services } = req.body;
 
   const missing = firstMissingField(req.body, ['client', 'employee', 'date', 'startTime', 'totalDuration', 'totalPrice']);
   if (missing) {
@@ -365,6 +369,10 @@ router.post('/', async (req, res) => {
         return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
       }
     }
+
+    const ordered = await checkAndOrderIds(req.models, services);
+    if (ordered.error) return sendError(res, 400, ERROR_CODES.ADDON_WITHOUT_PARENT, 'Додаткову послугу можна записати лише разом з основною, до якої вона додається');
+    services = ordered.ids;
 
     const effectiveStatus = status || 'Scheduled';
     const totalCost = await servicesCost(req.models, services);
@@ -444,6 +452,11 @@ router.put('/:id', async (req, res) => {
     delete req.body.priceBeforeDiscount;
     delete req.body.birthdayGreeting;
     delete req.body.totalCost;
+    if (Array.isArray(req.body.services)) {
+      const ordered = await checkAndOrderIds(req.models, req.body.services);
+      if (ordered.error) return sendError(res, 400, ERROR_CODES.ADDON_WITHOUT_PARENT, 'Додаткову послугу можна записати лише разом з основною, до якої вона додається');
+      req.body.services = ordered.ids;
+    }
     // Змінились послуги — оновлюємо знімок собівартості.
     if (Array.isArray(req.body.services)) req.body.totalCost = await servicesCost(req.models, req.body.services);
     // Підготовка: явне значення з форми, інакше — з нових послуг.

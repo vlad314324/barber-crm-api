@@ -6,6 +6,7 @@ const { canEmployeePerformServices } = require('../utils/employeeServices');
 const { findScheduleConflict } = require('../utils/appointmentOverlap');
 const { prepOf } = require('../utils/prepTime');
 const { effectiveServices } = require('../utils/employeePricing');
+const { addonsHaveParent, orderWithAddons } = require('../utils/addons');
 const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon } = require('../utils/scheduleWindow');
@@ -274,8 +275,13 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     if (!canEmployeePerformServices(employee, serviceIds)) {
       return sendError(res, 400, ERROR_CODES.EMPLOYEE_SERVICE_MISMATCH, 'Обраний майстер не надає одну або декілька з обраних послуг');
     }
-    // Ціна й тривалість — цього майстра (індивідуальні, якщо задані).
-    const services = effectiveServices(baseServices, employee);
+    if (!addonsHaveParent(baseServices)) {
+      return sendError(res, 400, ERROR_CODES.ADDON_WITHOUT_PARENT, 'Додаткову послугу можна записати лише разом з основною, до якої вона додається');
+    }
+    // Ціна й тривалість — цього майстра (індивідуальні, якщо задані);
+    // кожна додаткова — одразу після своєї основної.
+    const services = effectiveServices(orderWithAddons(baseServices), employee);
+    const orderedServiceIds = services.map((s) => s._id);
 
     // totalDuration — сума МАКСИМАЛЬНИХ тривалостей (коли діапазони
     // увімкнені) — саме це резервується в календарі, щоб виключити
@@ -364,7 +370,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
           _id: appointmentId,
           client: client._id,
           employee: employeeId,
-          services: serviceIds,
+          services: orderedServiceIds,
           date: dateObj,
           startTime,
           totalDuration,
