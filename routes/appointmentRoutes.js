@@ -49,7 +49,9 @@ const APPOINTMENT_IMPORT_COLUMNS = [
   { header: 'Preferred Lang', key: 'preferredLang', aliases: ['Мова'] },
 ];
 
-const APPOINTMENT_STATUSES = ['Scheduled', 'Completed', 'Cancelled', 'No-show'];
+const APPOINTMENT_STATUSES = ['Scheduled', 'Completed', 'Cancelled', 'No-show', 'Rescheduled'];
+// Скасовані й перенесені записи не резервують час майстра.
+const FREES_SLOT = ['Cancelled', 'Rescheduled'];
 
 // GET all appointments — той самий opt-in патерн, що й GET /clients
 // (clientRoutes.js): без ?page — точно попередня поведінка (плаский
@@ -201,7 +203,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
       }
 
       const status = resolveAlias(STATUS_ALIASES, String(row.status || 'Scheduled').trim());
-      if (!['Scheduled', 'Completed', 'Cancelled', 'No-show'].includes(status)) throw new Error(`Невідомий статус "${status}"`);
+      if (!APPOINTMENT_STATUSES.includes(status)) throw new Error(`Невідомий статус "${status}"`);
       const preferredLang = ['uk', 'en', 'cs', 'pl'].includes(row.preferredLang) ? row.preferredLang : 'uk';
 
       const doc = {
@@ -228,7 +230,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
         }
       };
 
-      if (status === 'Cancelled') {
+      if (FREES_SLOT.includes(status)) {
         await writeRow();
       } else {
         const conflict = await withEmployeeDayLock(req.models, employee._id, dateValue, async () => {
@@ -383,7 +385,7 @@ router.post('/', async (req, res) => {
     };
 
     let saved;
-    if (effectiveStatus === 'Cancelled') {
+    if (FREES_SLOT.includes(effectiveStatus)) {
       saved = await create();
     } else {
       const lockResult = await withEmployeeDayLock(req.models, employee, date, async () => {
@@ -490,7 +492,7 @@ router.put('/:id', async (req, res) => {
     }
 
     let updated;
-    if (touchesSchedule && effectiveStatus !== 'Cancelled') {
+    if (touchesSchedule && !FREES_SLOT.includes(effectiveStatus)) {
       const effectiveEmployeeId = req.body.employee ?? existing.employee;
       const effectiveDate = req.body.date ?? existing.date;
       const effectiveStartTime = req.body.startTime ?? existing.startTime;

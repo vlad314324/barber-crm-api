@@ -50,7 +50,7 @@ test('dashboard: completed appointments by weekday (Mon first) and status counts
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.deepEqual(body.appointmentsByWeekday, [2, 0, 1, 0, 0, 0, 0]);
-  assert.deepEqual(body.appointmentsByStatus, { Scheduled: 0, Completed: 3, Cancelled: 1, 'No-show': 1 });
+  assert.deepEqual(body.appointmentsByStatus, { Scheduled: 0, Completed: 3, Cancelled: 1, 'No-show': 1, Rescheduled: 0 });
 });
 
 test('funnel: admin gets steps, sources and a 30-day trend', async () => {

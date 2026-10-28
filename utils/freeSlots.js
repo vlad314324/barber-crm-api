@@ -20,7 +20,7 @@ async function dayBusy(models, settings, employee, date) {
   const existing = await models.Appointment.find({
     employee: employee._id,
     date: { $gte: startOfDay, $lte: endOfDay },
-    status: { $nin: ['Cancelled'] },
+    status: { $nin: ['Cancelled', 'Rescheduled'] },
   });
 
   // Запис блокує час разом із підготовкою після нього (utils/prepTime.js).

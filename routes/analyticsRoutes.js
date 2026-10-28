@@ -133,7 +133,7 @@ router.get('/dashboard', async (req, res) => {
       { $match: apptFilter },
       { $group: { _id: '$status', count: { $sum: 1 } } },
     ]);
-    const appointmentsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0 };
+    const appointmentsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0, Rescheduled: 0 };
     statusRows.forEach(r => { if (appointmentsByStatus[r._id] !== undefined) appointmentsByStatus[r._id] = r.count; });
 
     res.json({

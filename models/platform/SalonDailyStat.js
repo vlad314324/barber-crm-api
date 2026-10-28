@@ -35,6 +35,7 @@ const salonDailyStatSchema = new mongoose.Schema({
     Completed: { type: Number, default: 0 },
     Cancelled: { type: Number, default: 0 },
     'No-show': { type: Number, default: 0 },
+    Rescheduled: { type: Number, default: 0 },
   },
 
   crmLogins: { type: Number, default: 0 },

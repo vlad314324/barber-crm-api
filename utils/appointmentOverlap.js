@@ -25,7 +25,7 @@ async function hasOverlap(models, { employeeId, dateObj, startTime, totalDuratio
   const query = {
     employee: employeeId,
     date: { $gte: startOfDay, $lte: endOfDay },
-    status: { $nin: ['Cancelled'] },
+    status: { $nin: ['Cancelled', 'Rescheduled'] },
   };
   if (excludeAppointmentId) query._id = { $ne: excludeAppointmentId };
 

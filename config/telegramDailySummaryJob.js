@@ -97,7 +97,7 @@ async function runTelegramDailySummaryTick(salonsOverride) {
       }
 
       const today = todayUtcMidnight(timezone);
-      const appointments = await models.Appointment.find({ date: today, status: { $ne: 'Cancelled' } })
+      const appointments = await models.Appointment.find({ date: today, status: { $nin: ['Cancelled', 'Rescheduled'] } })
         .populate('employee')
         .populate('client')
         .sort({ startTime: 1 });

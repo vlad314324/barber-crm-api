@@ -92,7 +92,7 @@ router.put('/:employeeId/:date', async (req, res) => {
       const appointments = await Appointment.find({
         employee: employeeId,
         date: { $gte: day, $lt: new Date(day.getTime() + DAY_MS) },
-        status: { $nin: ['Cancelled', 'No-show'] },
+        status: { $nin: ['Cancelled', 'No-show', 'Rescheduled'] },
       });
       for (const it of intervals) {
         const s = toMinutes(it.startTime);

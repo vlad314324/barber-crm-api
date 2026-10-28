@@ -37,7 +37,7 @@ const appointmentSchema = new mongoose.Schema({
   prepTime: { type: Number, default: 0, min: 0 },
   status: {
     type: String,
-    enum: ['Scheduled', 'Completed', 'Cancelled', 'No-show'],
+    enum: ['Scheduled', 'Completed', 'Cancelled', 'No-show', 'Rescheduled'],
     default: 'Scheduled'
   },
   // Звідки з'явився запис — з публічної сторінки бронювання чи вручну від

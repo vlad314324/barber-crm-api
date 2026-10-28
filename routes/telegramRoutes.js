@@ -18,7 +18,7 @@ async function linkClient(chatId, payload, tgLang) {
   if (!salon || !salon.isActive) return invalid;
   const { models } = await getTenantContext(salon.dbName);
   const apt = await models.Appointment.findOne({ tgToken: parsed.tgToken }).populate('employee').populate('services');
-  if (!apt || apt.status === 'Cancelled') return invalid;
+  if (!apt || apt.status === 'Cancelled' || apt.status === 'Rescheduled') return invalid;
   const settings = await models.Settings.findOne();
   const start = toZonedInstant(apt.date, apt.startTime, settings?.timezone || 'Europe/Kyiv');
   if (!start || start.getTime() <= Date.now()) return invalid;

@@ -95,7 +95,7 @@ function buildUsageSummary(sessions, timezone) {
 // Appointment, нового трекінгу під це не треба.
 function summarizeAppointments(appointments) {
   const bookingsBySource = { public: 0, admin: 0 };
-  const bookingsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0 };
+  const bookingsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0, Rescheduled: 0 };
   appointments.forEach((a) => {
     if (a.source === 'public') bookingsBySource.public += 1;
     else bookingsBySource.admin += 1;

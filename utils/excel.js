@@ -156,6 +156,7 @@ const STATUS_ALIASES = {
   completed: 'Completed', 'виконано': 'Completed', 'завершено': 'Completed',
   cancelled: 'Cancelled', canceled: 'Cancelled', 'скасовано': 'Cancelled',
   'no-show': 'No-show', 'noshow': 'No-show', 'неявка': 'No-show', "не з'явився": 'No-show',
+  rescheduled: 'Rescheduled', 'перенесено': 'Rescheduled',
 };
 
 const CATEGORY_ALIASES = {
