@@ -201,6 +201,67 @@ router.get('/available-slots', async (req, res) => {
   }
 });
 
+// GET /api/:salonSlug/booking/available-slots-any?date=...&serviceIds=a,b
+// Вільний час без обраного майстра — клієнт може почати з послуг чи часу.
+// Злиття слотів усіх майстрів, що виконують обрані послуги; у кожного своя
+// тривалість (індивідуальні тривалості) і підготовка, як у POST /booking.
+// Для кожного часу — хто саме вільний, щоб сторінка звузила список майстрів.
+router.get('/available-slots-any', async (req, res) => {
+  const { Settings, Employee, Service } = req.models;
+  const { date, serviceIds } = req.query;
+  if (!date) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_REQUIRED, 'Поле "date" обовʼязкове', { field: 'date' });
+  }
+  if (!parseCalendarDate(date)) {
+    return sendError(res, 400, ERROR_CODES.INVALID_DATE, 'Некоректна дата', { field: 'date' });
+  }
+  if (serviceIds !== undefined && typeof serviceIds !== 'string') {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Поле "serviceIds" має бути рядком', { field: 'serviceIds' });
+  }
+
+  try {
+    let settings = await Settings.findOne();
+    if (!settings) settings = await Settings.create({});
+    if (isBeyondBookingHorizon(settings, date)) {
+      return res.json({ date, slots: [], closed: true, notOpenYet: true, bookingOpenUntil: settings.bookingOpenUntil });
+    }
+    const rangesEnabled = !!settings.serviceRangesEnabled;
+
+    const ids = (serviceIds || '').split(',').filter((id) => mongoose.isValidObjectId(id)).slice(0, 50);
+    const baseServices = ids.length ? await Service.find({ _id: { $in: ids }, isAvailable: true }) : [];
+    if (baseServices.length !== ids.length) {
+      return sendError(res, 400, ERROR_CODES.INVALID_SERVICE, 'Одну або декілька обраних послуг не знайдено');
+    }
+
+    const employees = (await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } }))
+      .filter((e) => !ids.length || canEmployeePerformServices(e, ids));
+
+    const byTime = new Map();
+    let anyOpen = false;
+    for (const employee of employees) {
+      const { window, blocked } = await dayBusy(req.models, settings, employee, date);
+      if (!window) continue;
+      anyOpen = true;
+      let duration = null;
+      let prep = 0;
+      if (baseServices.length) {
+        const services = effectiveServices(orderWithAddons(baseServices), employee);
+        duration = services.reduce((sum, s) => sum + (rangesEnabled ? (s.durationMax ?? s.duration) : s.duration), 0);
+        prep = prepOf(services);
+      }
+      for (const time of slotStarts(window, blocked, duration, prep)) {
+        if (!byTime.has(time)) byTime.set(time, []);
+        byTime.get(time).push(String(employee._id));
+      }
+    }
+
+    const slots = [...byTime.keys()].sort().map((time) => ({ time, employeeIds: byTime.get(time) }));
+    res.json({ date, slots, closed: !anyOpen });
+  } catch (err) {
+    handleRouteError(res, err, 'booking/available-slots-any');
+  }
+});
+
 // POST /api/:salonSlug/booking — створити запис
 router.post('/', publicBookingLimiter, async (req, res) => {
   const { Employee, Service, Appointment, Client, Settings, IdempotencyKey } = req.models;
