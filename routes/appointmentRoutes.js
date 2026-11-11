@@ -204,7 +204,7 @@ router.post('/import', requireRole('admin'), importUpload('file'), async (req, r
 
       const status = resolveAlias(STATUS_ALIASES, String(row.status || 'Scheduled').trim());
       if (!APPOINTMENT_STATUSES.includes(status)) throw new Error(`Невідомий статус "${status}"`);
-      const preferredLang = ['uk', 'en', 'cs', 'pl'].includes(row.preferredLang) ? row.preferredLang : 'uk';
+      const preferredLang = ['uk', 'en', 'cs', 'pl', 'de'].includes(row.preferredLang) ? row.preferredLang : 'uk';
 
       const doc = {
         client: client._id, employee: employee._id, services: resolvedServices.map((s) => s._id),

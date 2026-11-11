@@ -53,7 +53,7 @@ const appointmentSchema = new mongoose.Schema({
   // шаблону email/SMS-сповіщень (підтвердження, нагадування).
   preferredLang: {
     type: String,
-    enum: ['uk', 'en', 'cs', 'pl'],
+    enum: ['uk', 'en', 'cs', 'pl', 'de'],
     default: 'uk'
   },
   // Чи вже надіслано клієнту нагадування за 24 год до запису (щоб cron

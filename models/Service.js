@@ -19,7 +19,7 @@ const serviceSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
-  // Ключ — код мови ('uk'/'en'/'cs'/'pl'), значення — переклад name/description.
+  // Ключ — код мови ('uk'/'en'/'cs'/'pl'/'de'), значення — переклад name/description.
   translations: {
     type: Map,
     of: serviceTranslationSchema,

@@ -18,7 +18,7 @@ const resolveIcon = (icon) => (VALID_ICONS.includes(icon) ? icon : 'Sparkles');
 
 // Лише відомі мови і рядкові значення — інше відкидаємо, щоб не зберегти
 // довільні ключі/обʼєкти з тіла запиту. Порожні переклади не зберігаємо.
-const TRANSLATION_LANGS = ['uk', 'en', 'cs', 'pl'];
+const TRANSLATION_LANGS = ['uk', 'en', 'cs', 'pl', 'de'];
 const sanitizeTranslations = (input) => {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const out = {};

@@ -84,6 +84,24 @@ const T = {
     invalid: 'Link jest nieważny lub wizyta już minęła. Zarezerwuj ponownie i kliknij przycisk Telegram na ekranie potwierdzenia.',
     stopped: 'Powiadomienia wyłączone. Aby je włączyć, kliknij przycisk Telegram po następnej rezerwacji.',
   },
+  de: {
+    confirmation: '✅ <b>Termin bestätigt</b>',
+    reminder24: '🔔 <b>Erinnerung an Ihren Termin</b>',
+    reminder2h: '⏰ <b>Ihr Termin ist in 2 Stunden</b>',
+    rescheduled: '🔁 <b>Ihr Termin wurde verschoben</b>',
+    cancelled: '❌ <b>Ihr Termin wurde abgesagt</b>',
+    at: 'um',
+    master: 'Spezialist',
+    services: 'Leistungen',
+    address: 'Adresse',
+    bookAgain: 'Anderen Termin buchen',
+    page: 'Salonseite',
+    stopHint: 'Benachrichtigungen ausschalten: /stop',
+    linked: 'Fertig! Hier erhalten Sie Bestätigungen und Erinnerungen zu Ihren Terminen.',
+    welcome: 'Hallo! Das ist der Benachrichtigungs-Bot von hirnix. Um Terminerinnerungen zu erhalten, tippen Sie nach der Buchung auf „Benachrichtigungen in Telegram erhalten“.',
+    invalid: 'Der Link ist ungültig oder der Termin ist bereits vorbei. Buchen Sie erneut und tippen Sie auf dem Bestätigungsbildschirm auf die Telegram-Schaltfläche.',
+    stopped: 'Benachrichtigungen sind ausgeschaltet. Um sie wieder einzuschalten, tippen Sie nach Ihrer nächsten Buchung auf die Telegram-Schaltfläche.',
+  },
 };
 
 const langOf = (lang) => (EMAIL_LANGS.includes(lang) ? lang : 'uk');

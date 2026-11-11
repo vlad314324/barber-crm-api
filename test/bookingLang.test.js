@@ -72,6 +72,10 @@ test('confirmation email is rendered in the client language', () => {
   const pl = buildBookingConfirmation({ ...params, lang: 'pl' });
   assert.match(pl.html, /Dzień dobry, Veronika!/);
 
+  const de = buildBookingConfirmation({ ...params, lang: 'de' });
+  assert.match(de.subject, /Termin bestätigt: Fr\., 23\. Oktober 2026 um 13:30/);
+  assert.match(de.html, /Hallo Veronika!/);
+
   const uk = buildBookingConfirmation({ ...params, lang: 'uk' });
   assert.match(uk.subject, /Підтвердження запису на пт, 23 жовтня 2026/);
 });

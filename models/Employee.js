@@ -36,7 +36,7 @@ const employeeSchema = new mongoose.Schema({
   isActive:    { type: Boolean, default: true },
   bio:         { type: String, default: '' },
   specialties: [{ type: String }],
-  // Ключ — код мови ('uk'/'en'/'cs'/'pl'), значення — переклад bio/specialties.
+  // Ключ — код мови ('uk'/'en'/'cs'/'pl'/'de'), значення — переклад bio/specialties.
   translations: {
     type: Map,
     of: employeeTranslationSchema,

@@ -122,6 +122,23 @@ const TEMPLATES = {
     footerCopy: 'Dziękujemy za wybór!',
     subject: (date, startTime) => `✂️ Potwierdzenie rezerwacji na ${date} o ${startTime}`,
   },
+  de: {
+    subjectTitle: 'Terminbestätigung',
+    greeting: (name) => `Hallo ${name}!`,
+    intro: 'Ihr Termin wurde erfolgreich bestätigt. Die Details:',
+    rowEmployee: 'Spezialist',
+    rowDate: 'Datum',
+    rowTime: 'Uhrzeit',
+    rowDuration: 'Dauer',
+    minutesLabel: 'Min.',
+    hoursLabel: 'Std.',
+    servicesLabel: 'Leistungen:',
+    totalLabel: 'Gesamtbetrag: ',
+    calendarButton: 'Zu Google Kalender hinzufügen',
+    footerNote: 'Wenn Sie Ihren Termin verschieben oder absagen möchten, kontaktieren Sie uns bitte rechtzeitig.',
+    footerCopy: 'Danke, dass Sie sich für uns entschieden haben!',
+    subject: (date, startTime) => `✂️ Termin bestätigt: ${date} um ${startTime}`,
+  },
 };
 
 const REMINDER_TEMPLATES = {
@@ -171,6 +188,17 @@ const REMINDER_TEMPLATES = {
     footerNote: 'Jeśli chcesz przełożyć lub odwołać wizytę, skontaktuj się z nami wcześniej.',
     footerCopy: 'Do zobaczenia!',
     subject: (startTime) => `✂️ Przypomnienie: wizyta jutro o ${startTime}`,
+  },
+  de: {
+    headerTitle: 'Terminerinnerung',
+    greeting: (name) => `Hallo ${name}!`,
+    intro: (shopName) => shopName ? `Wir erinnern Sie an Ihren Termin morgen bei ${shopName}:` : 'Wir erinnern Sie an Ihren Termin morgen:',
+    rowEmployee: 'Spezialist',
+    rowDate: 'Datum',
+    rowTime: 'Uhrzeit',
+    footerNote: 'Wenn Sie Ihren Termin verschieben oder absagen möchten, kontaktieren Sie uns bitte rechtzeitig.',
+    footerCopy: 'Wir freuen uns auf Sie!',
+    subject: (startTime) => `✂️ Erinnerung: Termin morgen um ${startTime}`,
   },
 };
 
@@ -229,7 +257,7 @@ const EMPLOYEE_NOTIFICATION_TEMPLATE = {
 const resolveTemplate = (lang) => TEMPLATES[lang] || TEMPLATES.uk;
 
 // Мови листів клієнту = мови публічної сторінки бронювання.
-const EMAIL_LOCALES = { uk: 'uk-UA', en: 'en-US', cs: 'cs-CZ', pl: 'pl-PL' };
+const EMAIL_LOCALES = { uk: 'uk-UA', en: 'en-US', cs: 'cs-CZ', pl: 'pl-PL', de: 'de-DE' };
 
 // "пт, 23 жовтня 2026 р." / "Fri, October 23, 2026" / "pá 23. října 2026" —
 // календарна дата мовою клієнта. UTC, бо дата запису — це календарний
@@ -244,7 +272,7 @@ const formatEmailDate = (date, lang) => {
 
 // Збирає тему й HTML листа-підтвердження (без відправки) — окремо, щоб
 // мовні шаблони можна було перевірити тестом.
-const BIRTHDAY_DISCOUNT_LABEL = { uk: 'Знижка до дня народження', en: 'Birthday discount', cs: 'Narozeninová sleva', pl: 'Zniżka urodzinowa' };
+const BIRTHDAY_DISCOUNT_LABEL = { uk: 'Знижка до дня народження', en: 'Birthday discount', cs: 'Narozeninová sleva', pl: 'Zniżka urodzinowa', de: 'Geburtstagsrabatt' };
 
 const buildBookingConfirmation = ({ clientName, employeeName, services, date, startTime, totalPrice, totalPriceMax, totalDuration, totalDurationMin, lang, currency, rangesEnabled, discountPercent, priceBeforeDiscount, priceBeforeDiscountMax }) => {
   const currencyLabel = currencySymbol(currency);

@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const BOOKING_LANGUAGES = ['uk', 'en', 'cs', 'pl'];
+const BOOKING_LANGUAGES = ['uk', 'en', 'cs', 'pl', 'de'];
 const CURRENCIES = ['UAH', 'CZK', 'EUR', 'PLN', 'USD', 'GBP'];
 const TIMEZONES = ['Europe/Kyiv', 'Europe/Prague', 'Europe/Warsaw', 'Europe/Berlin', 'Europe/London', 'America/New_York', 'UTC'];
 

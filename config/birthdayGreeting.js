@@ -46,6 +46,16 @@ const T = {
     autoApply: (d) => `Zniżka zostanie naliczona automatycznie, jeśli zarezerwujesz wizytę do ${d} przez ten link.`,
     footer: 'Otrzymujesz tę wiadomość, ponieważ jesteś klientem salonu.',
   },
+  de: {
+    subject: (name, pct, shop) => `Alles Gute zum Geburtstag, ${name}! 🎁 −${pct} %${shop ? ` bei ${shop}` : ''}`,
+    title: (name) => `Alles Gute zum Geburtstag, ${name}! 🎉`,
+    intro: (shop) => `${shop ? `Das Team von ${shop} wünscht` : 'Wir wünschen'} Ihnen einen wunderschönen Tag voller Freude und Inspiration. Ein kleines Geschenk von uns:`,
+    discount: 'Rabatt auf Ihren nächsten Besuch',
+    validUntil: (d) => `Gültig bis ${d}`,
+    cta: 'Mit Rabatt buchen',
+    autoApply: (d) => `Der Rabatt wird automatisch angewendet, wenn Sie über diesen Link einen Termin bis ${d} buchen.`,
+    footer: 'Sie erhalten diese E-Mail, weil Sie Kunde des Salons sind.',
+  },
 };
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
