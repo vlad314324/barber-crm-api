@@ -77,6 +77,12 @@ const appointmentSchema = new mongoose.Schema({
   // екрані успішного бронювання (deep link t.me/<bot>?start=bk_...).
   // Назовні не віддається.
   tgToken: { type: String, select: false, index: { sparse: true } },
+  // Запрошення залишити відгук після візиту (config/reviewRequestJob.js):
+  // одноразовий токен посилання /review/<slug>/<token>; знімається, щойно
+  // клієнт залишив відгук. Назовні не віддається.
+  reviewToken: { type: String, select: false, index: { sparse: true } },
+  reviewRequestSent: { type: Boolean, default: false },
+  reviewRequestSentAt: { type: Date },
   // Знижка до дня народження (посилання з привітання, routes/bookingRoutes.js):
   // totalPrice уже зі знижкою, priceBeforeDiscount — сума без неї.
   discountPercent: { type: Number },

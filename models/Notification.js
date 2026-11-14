@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const NotificationSchema = new mongoose.Schema({
-  type: { type: String, required: true }, // 'onboarding_guide' | 'new_booking' | 'birthday'
+  type: { type: String, required: true }, // 'onboarding_guide' | 'new_booking' | 'birthday' | 'new_review'
   isRead: { type: Boolean, default: false },
   // Знімок даних на момент бронювання (лише для type: 'new_booking') —
   // дозволяє показати превʼю в дзвіночку без додаткових запитів.
@@ -16,6 +16,8 @@ const NotificationSchema = new mongoose.Schema({
   // скільки днів до нього лишалось на момент нагадування (0 або 7).
   clientId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Client' },
   daysUntil:     { type: Number },
+  // type: 'new_review' — оцінка з відгуку клієнта (1–5).
+  rating:        { type: Number },
 }, { timestamps: true });
 
 module.exports = NotificationSchema;

@@ -5,6 +5,7 @@ const { startReminderJob } = require('./config/reminderJob');
 const { startPlatformRollupJob } = require('./config/platformRollupJob');
 const { startTelegramDailySummaryJob } = require('./config/telegramDailySummaryJob');
 const { startBirthdayGreetingJob } = require('./config/birthdayGreetingJob');
+const { startReviewRequestJob } = require('./config/reviewRequestJob');
 const { closeAllTenantConnections } = require('./config/tenantDb');
 
 const PORT = process.env.PORT || 5000;
@@ -55,6 +56,9 @@ async function main() {
   // Привітання з ДН — відправка запланованого адміном у CRM, вимикати не
   // треба (без запланованих привітань тік нічого не робить).
   const birthdayGreetingTask = startBirthdayGreetingJob();
+  // Запрошення на відгук після візиту («Виконано»); вимикається в
+  // налаштуваннях салону (reviewRequestsEnabled).
+  const reviewRequestTask = startReviewRequestJob();
 
   const server = app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
@@ -68,6 +72,7 @@ async function main() {
     rollupTask?.stop();
     telegramDailySummaryTask?.stop();
     birthdayGreetingTask?.stop();
+    reviewRequestTask?.stop();
 
     // Безпечна сітка: якщо активні запити/з'єднання ніколи не спорожніють
     // (наприклад, зависле з'єднання клієнта), не висіти вічно — примусово

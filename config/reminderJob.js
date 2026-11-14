@@ -213,4 +213,4 @@ const startReminderJob = () => {
   return task; // .stop() на graceful shutdown (server.js)
 };
 
-module.exports = { startReminderJob, runReminderTick };
+module.exports = { startReminderJob, runReminderTick, appointmentStart };

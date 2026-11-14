@@ -123,13 +123,14 @@ router.get('/gift/:token', async (req, res) => {
 
 // GET /api/:salonSlug/booking/employees — публічний, без автентифікації.
 // Явний allowlist полів (а не повний документ): phone/email/hourlyRate/
-// userId/schedule/rating тощо — внутрішні дані персоналу, сторінці
-// бронювання не потрібні й не повинні бути видимі анонімному відвідувачу.
+// userId/schedule тощо — внутрішні дані персоналу, сторінці бронювання не
+// потрібні й не повинні бути видимі анонімному відвідувачу. rating/reviewCount
+// — публічні (рахуються лише з видимих відгуків).
 router.get('/employees', async (req, res) => {
   const { Employee } = req.models;
   try {
     const employees = await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } })
-      .select('name role customRoleLabel bio specialties translations services serviceOverrides');
+      .select('name role customRoleLabel bio specialties translations services serviceOverrides rating reviewCount');
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'booking/employees');

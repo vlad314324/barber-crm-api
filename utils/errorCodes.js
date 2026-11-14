@@ -69,6 +69,7 @@ const ERROR_CODES = {
 
   // --- reviews ---
   REVIEW_NOT_FOUND: 'REVIEW_NOT_FOUND',
+  REVIEW_LINK_INVALID: 'REVIEW_LINK_INVALID',
 
   // --- salons / multi-tenancy ---
   SALON_NOT_FOUND: 'SALON_NOT_FOUND',
