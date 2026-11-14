@@ -81,7 +81,7 @@ router.get('/settings', async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) settings = await Settings.create({});
-    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingOpenUntil } = settings;
+    const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingOpenUntil, timezone } = settings;
     const bookingGroupByCategory = !!settings.bookingGroupByCategory;
     // Порядок секцій на сторінці бронювання — порядок створення категорій
     // (так само їх бачить адмін). Лише назви: самі категорії — admin-only.
@@ -93,7 +93,7 @@ router.get('/settings', async (req, res) => {
     const serviceCategoryTranslations = Object.fromEntries(
       categories.map((c) => [c.name, Object.fromEntries(c.translations || [])])
     );
-    res.json({ shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations, bookingOpenUntil: bookingOpenUntil || '' });
+    res.json({ shopName, timezone, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations, bookingOpenUntil: bookingOpenUntil || '' });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }
