@@ -14,6 +14,7 @@ const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/r
 const mongoose = require('mongoose');
 const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
 const { servicesCost } = require('../utils/serviceCost');
+const { EMPLOYEE_ORDER } = require('../utils/employeeOrder');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { notifyUserTelegram } = require('../config/telegramBot');
 const { newTgToken, buildClientDeepLink, notifyClientTelegram, isClientLinked } = require('../config/clientTelegram');
@@ -130,7 +131,8 @@ router.get('/employees', async (req, res) => {
   const { Employee } = req.models;
   try {
     const employees = await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } })
-      .select('name role customRoleLabel bio specialties translations services serviceOverrides rating reviewCount');
+      .select('name role customRoleLabel bio specialties translations services serviceOverrides rating reviewCount')
+      .sort(EMPLOYEE_ORDER);
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'booking/employees');

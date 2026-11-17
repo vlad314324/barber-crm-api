@@ -34,6 +34,9 @@ const employeeSchema = new mongoose.Schema({
   hourlyRate:  { type: Number, required: true },
   isAvailable: { type: Boolean, default: true },
   isActive:    { type: Boolean, default: true },
+  // Порядок майстрів у календарі й на сторінці запису (менше — раніше);
+  // адмін змінює його на сторінці «Співробітники». Див. EMPLOYEE_ORDER.
+  sortOrder:   { type: Number },
   bio:         { type: String, default: '' },
   specialties: [{ type: String }],
   // Ключ — код мови ('uk'/'en'/'cs'/'pl'/'de'), значення — переклад bio/specialties.

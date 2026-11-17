@@ -1,10 +1,12 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { validateOverrides } = require('../utils/employeePricing');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, resolveAlias, ROLE_ALIASES, MAX_IMPORT_ROWS } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
+const { EMPLOYEE_ORDER, nextSortOrder } = require('../utils/employeeOrder');
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const DAY_HEADERS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
@@ -57,7 +59,7 @@ router.get('/', async (req, res) => {
   try {
     // Майстру — лише його власна картка (без чужих ставок і графіків).
     const filter = req.user.role === 'admin' ? {} : { userId: req.user.id };
-    const employees = await Employee.find(filter).sort({ createdAt: -1 });
+    const employees = await Employee.find(filter).sort(EMPLOYEE_ORDER);
     res.json(employees);
   } catch (err) {
     handleRouteError(res, err, 'employees/list');
@@ -68,7 +70,7 @@ router.get('/', async (req, res) => {
 router.get('/export', requireRole('admin'), async (req, res) => {
   const { Employee } = req.models;
   try {
-    const employees = await Employee.find().sort({ createdAt: -1 });
+    const employees = await Employee.find().sort(EMPLOYEE_ORDER);
     const rows = employees.map((e) => {
       const o = e.toObject();
       return {
@@ -284,11 +286,28 @@ router.post('/', requireRole('admin'), async (req, res) => {
       req.body.serviceOverrides = overrides;
     }
 
-    const employee = new Employee(req.body);
+    const employee = new Employee({ ...req.body, sortOrder: await nextSortOrder(Employee) });
     await employee.save();
     res.status(201).json(employee);
   } catch (err) {
     handleRouteError(res, err, 'employees/create');
+  }
+});
+
+// PUT /employees/order { ids: [...] } — новий порядок майстрів (усі або
+// частина: кому не передано, порядок не змінюється).
+router.put('/order', requireRole('admin'), async (req, res) => {
+  const { Employee } = req.models;
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500
+    || ids.some((id) => !mongoose.isValidObjectId(id)) || new Set(ids.map(String)).size !== ids.length) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Некоректний список майстрів', { field: 'ids' });
+  }
+  try {
+    await Employee.bulkWrite(ids.map((id, i) => ({ updateOne: { filter: { _id: id }, update: { $set: { sortOrder: i } } } })));
+    res.json(await Employee.find().sort(EMPLOYEE_ORDER));
+  } catch (err) {
+    handleRouteError(res, err, 'employees/order');
   }
 });
 
