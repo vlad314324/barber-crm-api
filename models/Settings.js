@@ -85,6 +85,9 @@ const SettingsSchema = new mongoose.Schema({
   // коли графік наступного місяця ще не сплановано. Персонал у CRM і далі
   // записує на будь-яку дату.
   bookingOpenUntil: { type: String, default: '', match: /^(\d{4}-\d{2}-\d{2})?$/ },
+  // Мінімум часу до візиту для онлайн-запису, хв (0 — без обмеження): о
+  // 11:00 з 120 клієнт бачить слоти лише з 13:00. Персонал у CRM не обмежений.
+  bookingMinLeadMinutes: { type: Number, default: 0, min: 0, max: 1440 },
   // Останні значення з діалогу "Привітати зі знижкою" — підставляються
   // наступного разу (routes/clientRoutes.js).
   birthdayGreetingDefaults: {

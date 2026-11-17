@@ -25,7 +25,7 @@ before(async () => {
   const barber = await models.User.create({ name: 'B', email: `b-${Date.now()}@t.local`, password: 'password123', role: 'barber' });
   adminToken = signToken(salon, admin);
   barberToken = signToken(salon, barber);
-  await models.Settings.create({ bookingGroupByCategory: true });
+  await models.Settings.updateOne({}, { $set: { bookingGroupByCategory: true } });
 });
 
 after(async () => {

@@ -5,7 +5,14 @@ const assert = require('node:assert/strict');
 const { createTestTenant, teardownTestTenant, disconnectPlatform } = require('./helpers/tenant');
 const { startTestServer, baseUrlFor, stopTestServer } = require('./helpers/server');
 
-const MONDAY = '2026-11-16';
+// Наступний понеділок: минулий час онлайн-запис не показує.
+function futureMonday() {
+  const now = new Date();
+  const d = (1 + 7 - now.getUTCDay()) % 7 || 7;
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + d)).toISOString().slice(0, 10);
+}
+const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const MONDAY = futureMonday();
 let server, baseUrl, tenant, empA, empB, cut, color;
 
 before(async () => {
@@ -51,14 +58,14 @@ test('a service only one master does narrows slots to that master and its durati
 });
 
 test('a day nobody works is closed', async () => {
-  const body = await slotsFor('date=2026-11-17');
+  const body = await slotsFor(`date=${addDays(MONDAY, 1)}`);
   assert.equal(body.closed, true);
   assert.deepEqual(body.slots, []);
 });
 
 test('beyond the booking horizon: closed, not open yet', async () => {
   await tenant.models.Settings.deleteMany({});
-  await tenant.models.Settings.create({ bookingOpenUntil: '2026-11-10' });
+  await tenant.models.Settings.create({ bookingOpenUntil: addDays(MONDAY, -1) });
   const body = await slotsFor(`date=${MONDAY}`);
   assert.equal(body.closed, true);
   assert.equal(body.notOpenYet, true);

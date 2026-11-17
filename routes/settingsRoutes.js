@@ -39,7 +39,7 @@ router.put('/', requireRole('admin'), async (req, res) => {
       delete body.coverImageKey;
       settings = await Settings.create(body);
     } else {
-      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, timezone, serviceRangesEnabled, durationDisplayUnit, bookingGroupByCategory, bookingOpenUntil, reviewRequestsEnabled } = req.body;
+      const { shopName, address, phone, email, workingHours, coverImageUrl, logoUrl, tagline, accentColor, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, timezone, serviceRangesEnabled, durationDisplayUnit, bookingGroupByCategory, bookingOpenUntil, bookingMinLeadMinutes, reviewRequestsEnabled } = req.body;
       if (shopName !== undefined) settings.shopName = shopName;
       if (address !== undefined) settings.address = address;
       if (phone !== undefined) settings.phone = phone;
@@ -61,6 +61,7 @@ router.put('/', requireRole('admin'), async (req, res) => {
       if (bookingGroupByCategory !== undefined) settings.bookingGroupByCategory = !!bookingGroupByCategory;
       if (reviewRequestsEnabled !== undefined) settings.reviewRequestsEnabled = !!reviewRequestsEnabled;
       if (bookingOpenUntil !== undefined) settings.bookingOpenUntil = bookingOpenUntil || '';
+      if (bookingMinLeadMinutes !== undefined) settings.bookingMinLeadMinutes = Number(bookingMinLeadMinutes) || 0;
       await settings.save();
 
       // URL лого/обкладинки замінили вручну (через API) — завантажений

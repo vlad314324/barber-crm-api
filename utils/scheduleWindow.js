@@ -75,4 +75,21 @@ function isBeyondBookingHorizon(settings, date) {
   return `${cal.year}-${pad(cal.month)}-${pad(cal.day)}` > until;
 }
 
-module.exports = { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon };
+// Мінімум хвилин до візиту для онлайн-запису (Settings.bookingMinLeadMinutes).
+function bookingLeadMinutes(settings) {
+  const n = Number(settings?.bookingMinLeadMinutes);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+// Чи можна онлайн записатися на date + startTime зараз: null — так;
+// 'past' — час уже минув; 'too_soon' — раніше, ніж за bookingMinLeadMinutes.
+// Рахуємо реальними моментами в поясі салону, а не годинником клієнта.
+function bookingTimeIssue(settings, date, startTime, timezone, now = Date.now()) {
+  const instant = toZonedInstant(date, startTime, timezone);
+  if (!instant) return null;
+  if (instant.getTime() <= now) return 'past';
+  if (instant.getTime() < now + bookingLeadMinutes(settings) * 60000) return 'too_soon';
+  return null;
+}
+
+module.exports = { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue };

@@ -9,7 +9,7 @@ const { effectiveServices } = require('../utils/employeePricing');
 const { addonsHaveParent, orderWithAddons } = require('../utils/addons');
 const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
-const { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon } = require('../utils/scheduleWindow');
+const { TIME_RE, parseCalendarDate, weekdayOf, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const mongoose = require('mongoose');
 const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
@@ -94,7 +94,7 @@ router.get('/settings', async (req, res) => {
     const serviceCategoryTranslations = Object.fromEntries(
       categories.map((c) => [c.name, Object.fromEntries(c.translations || [])])
     );
-    res.json({ shopName, timezone, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations, bookingOpenUntil: bookingOpenUntil || '' });
+    res.json({ shopName, timezone, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingGroupByCategory, serviceCategories, serviceCategoryTranslations, bookingOpenUntil: bookingOpenUntil || '', bookingMinLeadMinutes: bookingLeadMinutes(settings) });
   } catch (err) {
     handleRouteError(res, err, 'booking/settings');
   }
@@ -197,7 +197,12 @@ router.get('/available-slots', async (req, res) => {
       if (ids.length) prep = prepOf(await req.models.Service.find({ _id: { $in: ids } }).select('prepTime'));
     }
 
-    const availableSlots = slotStarts(window, blocked, requiredDuration, prep);
+    // Минулий час і ближчий за мінімум до візиту (bookingMinLeadMinutes) —
+    // за годинником салону, а не браузера клієнта.
+    const timezone = settings.timezone || DEFAULT_TIMEZONE;
+    const now = Date.now();
+    const availableSlots = slotStarts(window, blocked, requiredDuration, prep)
+      .filter((time) => !bookingTimeIssue(settings, date, time, timezone, now));
     res.json({ date, employeeId, availableSlots, closed: false });
   } catch (err) {
     handleRouteError(res, err, 'booking/available-slots');
@@ -239,6 +244,8 @@ router.get('/available-slots-any', async (req, res) => {
     const employees = (await Employee.find({ isAvailable: true, role: 'Barber', isActive: { $ne: false } }))
       .filter((e) => !ids.length || canEmployeePerformServices(e, ids));
 
+    const timezone = settings.timezone || DEFAULT_TIMEZONE;
+    const now = Date.now();
     const byTime = new Map();
     let anyOpen = false;
     for (const employee of employees) {
@@ -253,6 +260,7 @@ router.get('/available-slots-any', async (req, res) => {
         prep = prepOf(services);
       }
       for (const time of slotStarts(window, blocked, duration, prep)) {
+        if (bookingTimeIssue(settings, date, time, timezone, now)) continue;
         if (!byTime.has(time)) byTime.set(time, []);
         byTime.get(time).push(String(employee._id));
       }
@@ -376,9 +384,13 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       return sendError(res, 400, ERROR_CODES.OUTSIDE_WORKING_HOURS, 'Цей час поза робочими годинами майстра', { field: 'startTime' });
     }
 
-    const requestedInstant = toZonedInstant(date, startTime, timezone);
-    if (requestedInstant.getTime() <= Date.now()) {
+    const timeIssue = bookingTimeIssue(settings, date, startTime, timezone);
+    if (timeIssue === 'past') {
       return sendError(res, 400, ERROR_CODES.BOOKING_IN_PAST, 'Не можна забронювати час, який уже минув', { field: 'date' });
+    }
+    if (timeIssue === 'too_soon') {
+      const minLeadMinutes = bookingLeadMinutes(settings);
+      return sendError(res, 400, ERROR_CODES.BOOKING_TOO_SOON, `Онлайн-запис можливий не пізніше ніж за ${minLeadMinutes} хв до візиту`, { field: 'startTime', minLeadMinutes });
     }
 
     // Знижка до дня народження (посилання з привітання): дата візиту в
