@@ -32,7 +32,7 @@ async function runPlatformRollupTick(targetDate, salonsOverride) {
         models.Settings.findOne().select('timezone'),
         models.AnalyticsEvent.find({ createdAt: { $gte: start, $lt: end } }).select('event sessionId visitorId utmSource referrer'),
         models.CrmSession.find({ loginAt: { $gte: start, $lt: end } }).select('loginAt lastActiveAt'),
-        models.Appointment.find({ createdAt: { $gte: start, $lt: end } }).select('source status'),
+        models.Appointment.find({ createdAt: { $gte: start, $lt: end } }).select('source status rescheduledFrom'),
       ]);
       const timezone = settings?.timezone || DEFAULT_TIMEZONE;
 

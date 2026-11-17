@@ -91,6 +91,12 @@ const appointmentSchema = new mongoose.Schema({
   totalCost: { type: Number, select: false },
   priceBeforeDiscount: { type: Number },
   birthdayGreeting: { type: mongoose.Schema.Types.ObjectId, ref: 'BirthdayGreeting' },
+  // Перенесення (routes/appointmentRoutes.js PUT /:id): старий запис лишається
+  // «Перенесено» на старому часі й посилається на новий (rescheduledTo), новий
+  // «Заплановано» — на старий (rescheduledFrom). Так у статистиці видно і перенос,
+  // і візит, а одне бронювання не рахується двічі.
+  rescheduledFrom: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', index: { sparse: true } },
+  rescheduledTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment' },
   // Внутрішні коментарі персоналу (адмін/барбер), не видимі клієнту.
   // Append-only лог, а не одне поле — щоб два співробітники не затирали
   // коментарі одне одного через "сліпий" PUT /:id, що перезаписує весь документ.

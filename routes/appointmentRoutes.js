@@ -414,6 +414,80 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Telegram майстру про скасування/перенесення запису з CRM (фоново, не кидає).
+function notifyEmployeeTelegram(req, apt, kind) {
+  const { Employee, Client } = req.models;
+  (async () => {
+    try {
+      const [employeeDoc, clientDoc] = await Promise.all([
+        Employee.findById(apt.employee).select('userId'),
+        Client.findById(apt.client).select('name'),
+      ]);
+      if (!employeeDoc?.userId) return;
+      const when = `${new Date(apt.date).toLocaleDateString('uk-UA')} ${apt.startTime}`;
+      const text = kind === 'cancelled'
+        ? `❌ Запис скасовано\nКлієнт: ${clientDoc?.name || 'клієнт'}\nБув запланований на: ${when}`
+        : `🔁 Запис перенесено\nКлієнт: ${clientDoc?.name || 'клієнт'}\nНовий час: ${when}`;
+      notifyUserTelegram(employeeDoc.userId, req.tenant.salonId, text);
+    } catch (notifyErr) {
+      console.error('[appointments/update] telegram notify lookup failed:', notifyErr.message);
+    }
+  })();
+}
+
+// Поля, що переходять зі старого запису в новий при перенесенні; решту
+// (прапорці нагадувань, відгук) новий запис отримує за замовчуванням.
+const RESCHEDULE_COPY = ['client', 'employee', 'services', 'totalDuration', 'prepTime', 'totalPrice', 'totalCost',
+  'discountPercent', 'priceBeforeDiscount', 'birthdayGreeting', 'preferredLang', 'source', 'tgToken'];
+const RESCHEDULE_FROM_BODY = ['client', 'employee', 'services', 'date', 'startTime', 'totalDuration', 'prepTime',
+  'totalPrice', 'totalCost', 'preferredLang'];
+
+// Створює новий «Заплановано» на час із req.body і позначає старий запис
+// «Перенесено» з посиланням на новий. Повертає { appointment } або
+// { conflict: true | 'break' | 'already' }.
+async function splitReschedule(req, existing) {
+  const { Appointment } = req.models;
+  const old = await Appointment.findById(existing._id).select('+totalCost +tgToken').lean();
+  const doc = {};
+  for (const k of RESCHEDULE_COPY) if (old[k] !== undefined && old[k] !== null) doc[k] = old[k];
+  for (const k of RESCHEDULE_FROM_BODY) if (req.body[k] !== undefined) doc[k] = req.body[k];
+  doc.date = req.body.date ?? old.date;
+  doc.startTime = req.body.startTime ?? old.startTime;
+  doc.notes = (old.notes || []).map(({ text, authorName, authorRole, createdAt }) => ({ text, authorName, authorRole, createdAt }));
+  // Новий запис — «Заплановано», якщо в тій самій формі не обрали інший статус.
+  doc.status = req.body.status && req.body.status !== 'Rescheduled' ? req.body.status : 'Scheduled';
+  doc.rescheduledFrom = old._id;
+  const fresh = new Appointment(doc);
+
+  return withEmployeeDayLock(req.models, fresh.employee, fresh.date, async () => {
+    const conflict = await findScheduleConflict(req.models, {
+      employeeId: fresh.employee, dateObj: new Date(fresh.date),
+      startTime: fresh.startTime, totalDuration: fresh.totalDuration, prepTime: fresh.prepTime ?? 0,
+      excludeAppointmentId: old._id,
+    });
+    if (conflict) return { conflict };
+    // Атомарно: два паралельні збереження не створять два нові записи.
+    const claimed = await Appointment.findOneAndUpdate(
+      { _id: old._id, rescheduledTo: { $exists: false } },
+      { $set: { status: 'Rescheduled', rescheduledTo: fresh._id }, $unset: { tgToken: 1 } },
+    );
+    if (!claimed) return { conflict: 'already' };
+    try {
+      await fresh.save();
+    } catch (err) {
+      await Appointment.updateOne({ _id: old._id }, {
+        $set: { status: old.status, ...(old.tgToken ? { tgToken: old.tgToken } : {}) },
+        $unset: { rescheduledTo: 1 },
+      }).catch(() => {});
+      throw err;
+    }
+    if (old.birthdayGreeting) {
+      await req.models.BirthdayGreeting.updateOne({ promoAppointment: old._id }, { $set: { promoAppointment: fresh._id } }).catch(() => {});
+    }
+    return { appointment: fresh };
+  });
+}
+
 // PUT update appointment
 router.put('/:id', async (req, res) => {
   const { Appointment, Employee, Client } = req.models;
@@ -454,6 +528,8 @@ router.put('/:id', async (req, res) => {
     delete req.body.priceBeforeDiscount;
     delete req.body.birthdayGreeting;
     delete req.body.totalCost;
+    delete req.body.rescheduledFrom;
+    delete req.body.rescheduledTo;
     if (Array.isArray(req.body.services)) {
       const ordered = await checkAndOrderIds(req.models, req.body.services);
       if (ordered.error) return sendError(res, 400, ERROR_CODES.ADDON_WITHOUT_PARENT, 'Додаткову послугу можна записати лише разом з основною, до якої вона додається');
@@ -480,6 +556,30 @@ router.put('/:id', async (req, res) => {
     // бо звільнення слоту конфлікту не створює.
     const touchesSchedule = ['date', 'startTime', 'employee', 'totalDuration', 'prepTime'].some((f) => req.body[f] !== undefined);
     const effectiveStatus = req.body.status !== undefined ? req.body.status : existing.status;
+
+    // Перенесення зі статусу «Перенесено»: старий запис лишається на своєму
+    // часі як «Перенесено» (видно в статистиці клієнта), а на новий час
+    // створюється окремий «Заплановано», пов'язаний зі старим. Звичайне
+    // перетягування запланованого запису — редагування на місці, як і раніше.
+    const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
+    const timeMoved = (req.body.date !== undefined && dayKey(req.body.date) !== dayKey(existing.date))
+      || (req.body.startTime !== undefined && req.body.startTime !== existing.startTime);
+    if (timeMoved && (existing.status === 'Rescheduled' || req.body.status === 'Rescheduled')) {
+      if (existing.rescheduledTo) {
+        return sendError(res, 409, ERROR_CODES.APPOINTMENT_ALREADY_RESCHEDULED, 'Запис уже перенесено — змініть новий запис');
+      }
+      const created = await splitReschedule(req, existing);
+      if (created.conflict === 'break') return sendError(res, 409, ERROR_CODES.EMPLOYEE_ON_BREAK, 'У майстра перерва в цей час, оберіть інший слот');
+      if (created.conflict === 'already') return sendError(res, 409, ERROR_CODES.APPOINTMENT_ALREADY_RESCHEDULED, 'Запис уже перенесено — змініть новий запис');
+      if (created.conflict) return sendError(res, 409, ERROR_CODES.SLOT_ALREADY_BOOKED, 'Цей час вже зайнято, оберіть інший слот');
+      const apt = created.appointment;
+      notifyClientTelegram(req.models, req.tenant, apt._id, 'rescheduled');
+      notifyEmployeeTelegram(req, apt, 'rescheduled');
+      const out = apt.toObject();
+      delete out.totalCost;
+      delete out.tgToken;
+      return res.json(out);
+    }
 
     // Перенесення запису на іншу дату/час зсуває вікна нагадувань (24 год
     // клієнту, 2 год майстру) — якщо для старого часу нагадування вже
@@ -524,9 +624,8 @@ router.put('/:id', async (req, res) => {
     // лише хтось, хто дивиться в CRM, міг про це дізнатись.
     const justCancelled = existing.status !== 'Cancelled' && updated.status === 'Cancelled';
     const justRescheduled = !justCancelled && touchesSchedule && (req.body.date !== undefined || req.body.startTime !== undefined);
-    // Клієнту в Telegram — лише коли дата/час справді змінились (форма
+    // Клієнту — лише коли дата/час справді змінились (форма
     // редагування шле date/startTime завжди, навіть при зміні статусу).
-    const dayKey = (d) => new Date(d).toISOString().slice(0, 10);
     const clientRescheduled = justRescheduled && updated.status !== 'Cancelled'
       && (dayKey(existing.date) !== dayKey(updated.date) || existing.startTime !== updated.startTime);
     // Скасований запис звільняє знижку до дня народження — клієнт може
@@ -537,24 +636,7 @@ router.put('/:id', async (req, res) => {
     if (justCancelled || clientRescheduled) {
       notifyClientTelegram(req.models, req.tenant, updated._id, justCancelled ? 'cancelled' : 'rescheduled');
     }
-    if (justCancelled || justRescheduled) {
-      (async () => {
-        try {
-          const [employeeDoc, clientDoc] = await Promise.all([
-            Employee.findById(updated.employee).select('userId'),
-            Client.findById(updated.client).select('name'),
-          ]);
-          if (!employeeDoc?.userId) return;
-          const when = `${new Date(updated.date).toLocaleDateString('uk-UA')} ${updated.startTime}`;
-          const text = justCancelled
-            ? `❌ Запис скасовано\nКлієнт: ${clientDoc?.name || 'клієнт'}\nБув запланований на: ${when}`
-            : `🔁 Запис перенесено\nКлієнт: ${clientDoc?.name || 'клієнт'}\nНовий час: ${when}`;
-          notifyUserTelegram(employeeDoc.userId, req.tenant.salonId, text);
-        } catch (notifyErr) {
-          console.error('[appointments/update] telegram notify lookup failed:', notifyErr.message);
-        }
-      })();
-    }
+    if (justCancelled || justRescheduled) notifyEmployeeTelegram(req, updated, justCancelled ? 'cancelled' : 'rescheduled');
 
     res.json(updated);
   } catch (err) {

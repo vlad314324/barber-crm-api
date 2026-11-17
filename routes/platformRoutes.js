@@ -151,7 +151,7 @@ router.get('/salons/:id/analytics/usage', verifyPlatformAdmin, async (req, res) 
     const [settings, sessions, appointments] = await Promise.all([
       models.Settings.findOne().select('timezone'),
       models.CrmSession.find({ loginAt: { $gte: since } }).select('loginAt lastActiveAt'),
-      models.Appointment.find({ createdAt: { $gte: since } }).select('source status'),
+      models.Appointment.find({ createdAt: { $gte: since } }).select('source status rescheduledFrom'),
     ]);
     const timezone = settings?.timezone || DEFAULT_TIMEZONE;
     const usage = buildUsageSummary(sessions, timezone);

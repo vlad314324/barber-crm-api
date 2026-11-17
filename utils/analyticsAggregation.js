@@ -96,12 +96,17 @@ function buildUsageSummary(sessions, timezone) {
 function summarizeAppointments(appointments) {
   const bookingsBySource = { public: 0, admin: 0 };
   const bookingsByStatus = { Scheduled: 0, Completed: 0, Cancelled: 0, 'No-show': 0, Rescheduled: 0 };
+  let totalBookings = 0;
   appointments.forEach((a) => {
+    if (bookingsByStatus[a.status] !== undefined) bookingsByStatus[a.status] += 1;
+    // Запис, створений перенесенням (rescheduledFrom), — той самий візит, а не
+    // нове бронювання: у статусах він є, у кількості бронювань — ні.
+    if (a.rescheduledFrom) return;
+    totalBookings += 1;
     if (a.source === 'public') bookingsBySource.public += 1;
     else bookingsBySource.admin += 1;
-    if (bookingsByStatus[a.status] !== undefined) bookingsByStatus[a.status] += 1;
   });
-  return { bookingsBySource, bookingsByStatus, totalBookings: appointments.length };
+  return { bookingsBySource, bookingsByStatus, totalBookings };
 }
 
 // Будує масив останніх `days` календарних днів (включно з сьогодні) з
@@ -130,7 +135,7 @@ async function computeFunnelAnalytics(models, days) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const [events, bookings] = await Promise.all([
     models.AnalyticsEvent.find({ createdAt: { $gte: since } }).select('event sessionId visitorId utmSource referrer createdAt'),
-    models.Appointment.find({ source: 'public', createdAt: { $gte: since } }).select('createdAt'),
+    models.Appointment.find({ source: 'public', createdAt: { $gte: since }, rescheduledFrom: { $exists: false } }).select('createdAt'),
   ]);
 
   const { funnel, submitFailedCount, uniqueVisitors, sourceBreakdown } = buildFunnelSummary(events);
