@@ -1,7 +1,9 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const requireRole = require('../middleware/requireRole');
+const { CATEGORY_ORDER, nextSortOrder } = require('../utils/employeeOrder');
 
 // Перегляд категорій — і адміну, і майстру (сторінка Послуг для майстра
 // лише на читання); усі зміни — тільки адмін.
@@ -32,7 +34,7 @@ const sanitizeTranslations = (input) => {
 router.get('/', async (req, res) => {
   const { Category } = req.models;
   try {
-    const categories = await Category.find().sort({ createdAt: 1 });
+    const categories = await Category.find().sort(CATEGORY_ORDER);
     res.json(categories);
   } catch (err) {
     handleRouteError(res, err, 'categories/list');
@@ -51,10 +53,30 @@ router.post('/', async (req, res) => {
     const name = req.body.name.trim();
     const existing = await Category.findOne({ name });
     if (existing) return sendError(res, 400, ERROR_CODES.CATEGORY_NAME_EXISTS, 'Категорія з такою назвою вже існує');
-    const category = await Category.create({ name, icon: resolveIcon(req.body.icon), translations: sanitizeTranslations(req.body.translations) });
+    const category = await Category.create({
+      name, icon: resolveIcon(req.body.icon), translations: sanitizeTranslations(req.body.translations),
+      sortOrder: await nextSortOrder(Category),
+    });
     res.status(201).json(category);
   } catch (err) {
     handleRouteError(res, err, 'categories/create');
+  }
+});
+
+// PUT /api/:salonSlug/categories/order { ids: [...] } — новий порядок категорій
+// (той самий у «Послугах» і на сторінці онлайн-запису).
+router.put('/order', async (req, res) => {
+  const { Category } = req.models;
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500
+    || ids.some((id) => !mongoose.isValidObjectId(id)) || new Set(ids.map(String)).size !== ids.length) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Некоректний список категорій', { field: 'ids' });
+  }
+  try {
+    await Category.bulkWrite(ids.map((id, i) => ({ updateOne: { filter: { _id: id }, update: { $set: { sortOrder: i } } } })));
+    res.json(await Category.find().sort(CATEGORY_ORDER));
+  } catch (err) {
+    handleRouteError(res, err, 'categories/order');
   }
 });
 

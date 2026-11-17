@@ -14,7 +14,7 @@ const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/r
 const mongoose = require('mongoose');
 const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
 const { servicesCost } = require('../utils/serviceCost');
-const { EMPLOYEE_ORDER } = require('../utils/employeeOrder');
+const { EMPLOYEE_ORDER, CATEGORY_ORDER } = require('../utils/employeeOrder');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
 const { notifyUserTelegram } = require('../config/telegramBot');
 const { newTgToken, buildClientDeepLink, notifyClientTelegram, isClientLinked } = require('../config/clientTelegram');
@@ -84,10 +84,10 @@ router.get('/settings', async (req, res) => {
     if (!settings) settings = await Settings.create({});
     const { shopName, coverImageUrl, logoUrl, tagline, accentColor, address, phone, workingHours, latitude, longitude, websiteUrl, bookingLanguages, defaultBookingLanguage, currency, bookingOpenUntil, timezone } = settings;
     const bookingGroupByCategory = !!settings.bookingGroupByCategory;
-    // Порядок секцій на сторінці бронювання — порядок створення категорій
-    // (так само їх бачить адмін). Лише назви: самі категорії — admin-only.
+    // Порядок секцій на сторінці бронювання — той, що задав адмін у
+    // «Категоріях» (CATEGORY_ORDER). Лише назви: самі категорії — admin-only.
     const categories = bookingGroupByCategory
-      ? await Category.find().sort({ createdAt: 1 }).select('name translations')
+      ? await Category.find().sort(CATEGORY_ORDER).select('name translations')
       : [];
     const serviceCategories = categories.map((c) => c.name);
     // { [назва категорії]: { [мова]: переклад } } — для заголовків секцій
