@@ -7,6 +7,7 @@ const ClientTelegramLink = require('../models/platform/ClientTelegramLink');
 const { getTenantContext } = require('../config/tenantDb');
 const { T, langOf, langFromTelegram, parseClientPayload, buildClientMessage } = require('../config/clientTelegram');
 const { toZonedInstant } = require('../utils/scheduleWindow');
+const { handleStatusCallback } = require('../config/statusNudgeJob');
 
 // Підписка клієнта салону з кнопки на екрані успішного бронювання:
 // /start bk_<salonId><tgToken>. Повертає текст відповіді боту.
@@ -49,6 +50,13 @@ router.post('/webhook', async (req, res) => {
   }
 
   try {
+    // Кнопки «✅ Виконано» / «🚫 Неявка» з вечірнього нагадування.
+    const cq = req.body?.callback_query;
+    if (cq) {
+      if (String(cq.data || '').startsWith('st:')) await handleStatusCallback(cq);
+      return res.sendStatus(200);
+    }
+
     const text = req.body?.message?.text;
     const chatId = req.body?.message?.chat?.id;
     if (typeof text !== 'string' || !chatId) return res.sendStatus(200);

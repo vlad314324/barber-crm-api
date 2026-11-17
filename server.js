@@ -6,6 +6,7 @@ const { startPlatformRollupJob } = require('./config/platformRollupJob');
 const { startTelegramDailySummaryJob } = require('./config/telegramDailySummaryJob');
 const { startBirthdayGreetingJob } = require('./config/birthdayGreetingJob');
 const { startReviewRequestJob } = require('./config/reviewRequestJob');
+const { startStatusNudgeJob } = require('./config/statusNudgeJob');
 const { closeAllTenantConnections } = require('./config/tenantDb');
 
 const PORT = process.env.PORT || 5000;
@@ -60,6 +61,14 @@ async function main() {
   // налаштуваннях салону (reviewRequestsEnabled).
   const reviewRequestTask = startReviewRequestJob();
 
+  // Вечірнє нагадування персоналу в Telegram оновити статуси записів.
+  let statusNudgeTask = null;
+  if (process.env.DISABLE_STATUS_NUDGE === 'true') {
+    console.log('Status nudge job disabled (DISABLE_STATUS_NUDGE=true)');
+  } else {
+    statusNudgeTask = startStatusNudgeJob();
+  }
+
   const server = app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
   let shuttingDown = false;
@@ -73,6 +82,7 @@ async function main() {
     telegramDailySummaryTask?.stop();
     birthdayGreetingTask?.stop();
     reviewRequestTask?.stop();
+    statusNudgeTask?.stop();
 
     // Безпечна сітка: якщо активні запити/з'єднання ніколи не спорожніють
     // (наприклад, зависле з'єднання клієнта), не висіти вічно — примусово

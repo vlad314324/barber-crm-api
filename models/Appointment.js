@@ -97,6 +97,10 @@ const appointmentSchema = new mongoose.Schema({
   // і візит, а одне бронювання не рахується двічі.
   rescheduledFrom: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', index: { sparse: true } },
   rescheduledTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment' },
+  // Запис уже потрапив у вечірнє нагадування «оновіть статуси»
+  // (config/statusNudgeJob.js) — майстру й адміністратору окремо.
+  statusNudgeEmployeeSent: { type: Boolean, default: false },
+  statusNudgeAdminSent: { type: Boolean, default: false },
   // Внутрішні коментарі персоналу (адмін/барбер), не видимі клієнту.
   // Append-only лог, а не одне поле — щоб два співробітники не затирали
   // коментарі одне одного через "сліпий" PUT /:id, що перезаписує весь документ.

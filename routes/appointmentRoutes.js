@@ -589,6 +589,8 @@ router.put('/:id', async (req, res) => {
       if (existing.employeeReminderSent) req.body.employeeReminderSent = false;
       if (existing.clientTgReminderSent) req.body.clientTgReminderSent = false;
       if (existing.clientTg2hSent) req.body.clientTg2hSent = false;
+      if (existing.statusNudgeEmployeeSent) req.body.statusNudgeEmployeeSent = false;
+      if (existing.statusNudgeAdminSent) req.body.statusNudgeAdminSent = false;
     }
 
     let updated;
