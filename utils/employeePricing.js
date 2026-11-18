@@ -1,7 +1,28 @@
-// Індивідуальні ціна й тривалість послуги для майстра
+// Індивідуальні ціна, тривалість і опис послуги для майстра
 // (Employee.serviceOverrides). Порожнє поле перевизначення — базове значення
 // послуги. Собівартість і час на підготовку спільні для всіх майстрів.
 const FIELDS = ['price', 'priceMax', 'duration', 'durationMax'];
+const DESCRIPTION_LANGS = ['uk', 'en', 'cs', 'pl', 'de'];
+const MAX_DESCRIPTION = 2000;
+
+const plainMap = (m) => (m instanceof Map ? Object.fromEntries(m) : (m || {}));
+
+// Свій опис майстра замість загального. Якщо він заданий, переклади
+// загального опису (тексти іншого майстра) не показуються: мова без
+// перекладу майстра бере його основний опис.
+function applyDescription(obj, o) {
+  const tr = plainMap(o.descriptionTranslations);
+  const hasTr = Object.values(tr).some((v) => typeof v === 'string' && v.trim());
+  if (!o.description && !hasTr) return;
+  if (o.description) obj.description = o.description;
+  const translations = { ...plainMap(obj.translations) };
+  const langs = new Set([...Object.keys(translations), ...Object.keys(tr)]);
+  for (const lang of langs) {
+    const own = typeof tr[lang] === 'string' ? tr[lang].trim() : '';
+    translations[lang] = { ...(translations[lang] || {}), description: own || (o.description ? '' : translations[lang]?.description || '') };
+  }
+  obj.translations = translations;
+}
 
 function overrideFor(employee, serviceId) {
   const id = String(serviceId?._id ?? serviceId);
@@ -16,6 +37,7 @@ function effectiveService(service, employee) {
   const o = overrideFor(employee, obj._id);
   if (!o) return obj;
   for (const f of FIELDS) if (o[f] !== undefined && o[f] !== null) obj[f] = o[f];
+  applyDescription(obj, o);
   if (obj.priceMax !== undefined && obj.priceMax !== null && obj.priceMax < obj.price) delete obj.priceMax;
   if (obj.durationMax !== undefined && obj.durationMax !== null && obj.durationMax < obj.duration) delete obj.durationMax;
   return obj;
@@ -53,6 +75,26 @@ function validateOverrides(raw, existingServiceIds) {
     }
     if (out.durationMax !== undefined && out.duration !== undefined && out.durationMax < out.duration) {
       return { error: 'Максимальна тривалість майстра не може бути меншою за базову', field: 'durationMax' };
+    }
+    if (row.description !== undefined && row.description !== null) {
+      if (typeof row.description !== 'string' || row.description.length > MAX_DESCRIPTION) {
+        return { error: 'Опис майстра має бути текстом до 2000 символів', field: 'description' };
+      }
+      if (row.description.trim()) out.description = row.description.trim();
+    }
+    const tr = row.descriptionTranslations instanceof Map ? plainMap(row.descriptionTranslations) : row.descriptionTranslations;
+    if (tr !== undefined && tr !== null) {
+      if (typeof tr !== 'object' || Array.isArray(tr)) return { error: 'Переклади опису мають бути обʼєктом', field: 'descriptionTranslations' };
+      const clean = {};
+      for (const lang of DESCRIPTION_LANGS) {
+        const v = tr[lang];
+        if (v === undefined || v === null || v === '') continue;
+        if (typeof v !== 'string' || v.length > MAX_DESCRIPTION) {
+          return { error: 'Опис майстра має бути текстом до 2000 символів', field: 'descriptionTranslations' };
+        }
+        if (v.trim()) clean[lang] = v.trim();
+      }
+      if (Object.keys(clean).length) out.descriptionTranslations = clean;
     }
     if (Object.keys(out).length > 1) overrides.push(out);
   }

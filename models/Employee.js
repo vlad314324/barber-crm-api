@@ -22,6 +22,10 @@ const serviceOverrideSchema = new mongoose.Schema({
   priceMax:    { type: Number, min: 0.01 },
   duration:    { type: Number, min: 1 },
   durationMax: { type: Number, min: 1 },
+  // Свій опис послуги в цього майстра: основною мовою салону і переклади
+  // ({ uk: '...', en: '...' }). Порожньо — загальний опис послуги.
+  description: { type: String, trim: true, maxlength: 2000 },
+  descriptionTranslations: { type: Map, of: String },
 }, { _id: false });
 
 const employeeSchema = new mongoose.Schema({
