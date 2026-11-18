@@ -65,6 +65,15 @@ function effectiveWindow(settings, employee, weekdayIdx) {
   return { fromMinutes, toMinutes: toMinutesVal };
 }
 
+// Чи салон працює в цей день тижня (Settings.workingHours) — щоб відрізнити
+// «салон зачинено» від «вихідний у майстра».
+function salonOpenOn(settings, weekdayIdx) {
+  if (weekdayIdx === null || weekdayIdx === undefined) return false;
+  const key = DAY_KEYS[weekdayIdx];
+  const day = settings?.workingHours?.get ? settings.workingHours.get(key) : settings?.workingHours?.[key];
+  return !!day?.isOpen;
+}
+
 // Чи дата `date` пізніша за межу онлайн-запису (Settings.bookingOpenUntil).
 // Порівнюємо календарні "YYYY-MM-DD" рядком — без таймзон.
 function isBeyondBookingHorizon(settings, date) {
@@ -92,4 +101,4 @@ function bookingTimeIssue(settings, date, startTime, timezone, now = Date.now())
   return null;
 }
 
-module.exports = { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue };
+module.exports = { TIME_RE, parseCalendarDate, weekdayOf, toZonedInstant, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue, salonOpenOn };

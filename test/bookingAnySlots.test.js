@@ -61,6 +61,19 @@ test('a day nobody works is closed', async () => {
   const body = await slotsFor(`date=${addDays(MONDAY, 1)}`);
   assert.equal(body.closed, true);
   assert.deepEqual(body.slots, []);
+  assert.equal(body.employeeOff, true, 'the salon works on Tuesday, only the masters are off');
+  // Неділя — салон зачинено (типовий графік), це не «вихідний майстра».
+  assert.equal((await slotsFor(`date=${addDays(MONDAY, 6)}`)).employeeOff, false);
+});
+
+test('one master: day off of the master vs closed salon', async () => {
+  const one = async (date) => (await fetch(`${baseUrl}/${tenant.slug}/booking/available-slots?employeeId=${empA._id}&date=${date}`)).json();
+  const tuesday = await one(addDays(MONDAY, 1));
+  assert.equal(tuesday.closed, true);
+  assert.equal(tuesday.employeeOff, true);
+  const sunday = await one(addDays(MONDAY, 6));
+  assert.equal(sunday.closed, true);
+  assert.equal(sunday.employeeOff, false);
 });
 
 test('beyond the booking horizon: closed, not open yet', async () => {

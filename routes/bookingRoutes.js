@@ -9,7 +9,7 @@ const { effectiveServices } = require('../utils/employeePricing');
 const { addonsHaveParent, orderWithAddons } = require('../utils/addons');
 const { dayBusy, slotStarts } = require('../utils/freeSlots');
 const { withEmployeeDayLock } = require('../utils/appointmentLock');
-const { TIME_RE, parseCalendarDate, weekdayOf, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue } = require('../utils/scheduleWindow');
+const { TIME_RE, parseCalendarDate, weekdayOf, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue, salonOpenOn } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const mongoose = require('mongoose');
 const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
@@ -186,7 +186,8 @@ router.get('/available-slots', async (req, res) => {
     // Зайнятий час: записи + перерви майстра — однаково блокують слоти.
     const { window, blocked } = await dayBusy(req.models, settings, employee, date);
     if (!window) {
-      return res.json({ date, employeeId, availableSlots: [], closed: true });
+      // employeeOff — салон у цей день працює, вихідний лише в майстра.
+      return res.json({ date, employeeId, availableSlots: [], closed: true, employeeOff: salonOpenOn(settings, weekdayOf(date)) });
     }
 
     // Необов'язковий serviceIds (через кому) — щоб врахувати час на
@@ -267,7 +268,8 @@ router.get('/available-slots-any', async (req, res) => {
     }
 
     const slots = [...byTime.keys()].sort().map((time) => ({ time, employeeIds: byTime.get(time) }));
-    res.json({ date, slots, closed: !anyOpen });
+    // employeeOff — салон працює, але ніхто з майстрів (з цими послугами) — ні.
+    res.json({ date, slots, closed: !anyOpen, employeeOff: !anyOpen && salonOpenOn(settings, weekdayOf(date)) });
   } catch (err) {
     handleRouteError(res, err, 'booking/available-slots-any');
   }
