@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const { validateOverrides } = require('../utils/employeePricing');
+const { validateOverrides, carryImages } = require('../utils/employeePricing');
+const storage = require('../utils/storage');
 const router = express.Router();
 const { ERROR_CODES, sendError, firstMissingField, handleRouteError } = require('../utils/errorCodes');
 const { buildWorkbookBuffer, parseWorkbookBuffer, parseFlexibleNumber, resolveAlias, ROLE_ALIASES, MAX_IMPORT_ROWS } = require('../utils/excel');
@@ -283,7 +284,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
         existingIds,
       );
       if (error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, error, { field });
-      req.body.serviceOverrides = overrides;
+      req.body.serviceOverrides = carryImages(overrides, [], []).overrides;
     }
 
     const employee = new Employee({ ...req.body, sortOrder: await nextSortOrder(Employee) });
@@ -324,6 +325,7 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
 
     // Індивідуальні ціни майстра: лише для існуючих послуг, які він виконує
     // (порожній services = усі послуги).
+    let orphanImageKeys = [];
     if (req.body.serviceOverrides !== undefined || Array.isArray(req.body.services)) {
       const current = await Employee.findById(req.params.id).select('services serviceOverrides');
       const services = Array.isArray(req.body.services) ? req.body.services : (current?.services || []);
@@ -341,13 +343,17 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
         existingIds,
       );
       if (error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, error, { field });
-      req.body.serviceOverrides = overrides;
+      // Фото майстра (зі схвалених пропозицій) форма не надсилає — переносимо.
+      const carried = carryImages(overrides, current?.serviceOverrides, existingIds);
+      req.body.serviceOverrides = carried.overrides;
+      orphanImageKeys = carried.orphanKeys;
     }
 
     const employee = await Employee.findByIdAndUpdate(
       req.params.id, req.body, { new: true, runValidators: true }
     );
     if (!employee) return sendError(res, 404, ERROR_CODES.EMPLOYEE_NOT_FOUND, 'Майстра не знайдено');
+    for (const key of orphanImageKeys) await storage.deleteObject(key);
     res.json(employee);
   } catch (err) {
     handleRouteError(res, err, 'employees/update');

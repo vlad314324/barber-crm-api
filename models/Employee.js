@@ -26,7 +26,14 @@ const serviceOverrideSchema = new mongoose.Schema({
   // ({ uk: '...', en: '...' }). Порожньо — загальний опис послуги.
   description: { type: String, trim: true, maxlength: 2000 },
   descriptionTranslations: { type: Map, of: String },
+  // Своє фото послуги в цього майстра (схвалене адміном, routes/
+  // serviceRequestRoutes.js). imageKey — ключ у сховищі, назовні не віддається.
+  imageUrl: { type: String },
+  imageKey: { type: String },
 }, { _id: false });
+// Ключ фото у сховищі — внутрішній, у JSON (зокрема публічний
+// /booking/employees) не потрапляє.
+serviceOverrideSchema.set('toJSON', { transform: (doc, ret) => { delete ret.imageKey; return ret; } });
 
 const employeeSchema = new mongoose.Schema({
   name:        { type: String, required: true },

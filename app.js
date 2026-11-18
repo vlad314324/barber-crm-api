@@ -42,6 +42,7 @@ tenantRouter.use('/employees', verifyToken, require('./routes/employeeRoutes'));
 tenantRouter.use('/appointments', verifyToken, require('./routes/appointmentRoutes'));
 tenantRouter.use('/services', verifyToken, require('./routes/serviceRoutes'));
 tenantRouter.use('/categories', verifyToken, require('./routes/categoryRoutes'));
+tenantRouter.use('/service-requests', verifyToken, require('./routes/serviceRequestRoutes'));
 tenantRouter.use('/reviews', verifyToken, require('./routes/reviewRoutes'));
 tenantRouter.use('/booking', require('./routes/publicReviewRoutes'));
 tenantRouter.use('/booking', require('./routes/bookingRoutes'));

@@ -18,6 +18,12 @@ const NotificationSchema = new mongoose.Schema({
   daysUntil:     { type: Number },
   // type: 'new_review' — оцінка з відгуку клієнта (1–5).
   rating:        { type: Number },
+  // type: 'service_change_request' (адміну) / 'service_change_reviewed'
+  // (майстру, employee заданий) — пропозиція змінити опис/фото послуги.
+  serviceName:   { type: String },
+  requestId:     { type: mongoose.Schema.Types.ObjectId, ref: 'ServiceChangeRequest' },
+  requestStatus: { type: String }, // 'approved' | 'rejected'
+  rejectReason:  { type: String },
 }, { timestamps: true });
 
 module.exports = NotificationSchema;

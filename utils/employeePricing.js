@@ -38,6 +38,7 @@ function effectiveService(service, employee) {
   if (!o) return obj;
   for (const f of FIELDS) if (o[f] !== undefined && o[f] !== null) obj[f] = o[f];
   applyDescription(obj, o);
+  if (o.imageUrl) obj.imageUrl = o.imageUrl;
   if (obj.priceMax !== undefined && obj.priceMax !== null && obj.priceMax < obj.price) delete obj.priceMax;
   if (obj.durationMax !== undefined && obj.durationMax !== null && obj.durationMax < obj.duration) delete obj.durationMax;
   return obj;
@@ -96,9 +97,37 @@ function validateOverrides(raw, existingServiceIds) {
       }
       if (Object.keys(clean).length) out.descriptionTranslations = clean;
     }
+    // Адмін прибирає фото майстра (саме фото зберігає carryImages).
+    if (row.removeImage === true) out.removeImage = true;
     if (Object.keys(out).length > 1) overrides.push(out);
   }
   return { overrides };
 }
 
-module.exports = { overrideFor, effectiveService, effectiveServices, validateOverrides };
+// Фото майстра не приходить із форми цін/описів (його ставить лише
+// схвалення пропозиції) — переносимо збережене у нові overrides. Фото
+// послуг, яких більше немає в overrides або з removeImage, повертаємо як
+// orphanKeys — їх треба видалити зі сховища.
+function carryImages(nextOverrides, currentOverrides, allowedServiceIds) {
+  const current = new Map((currentOverrides || []).filter((o) => o.imageUrl).map((o) => [String(o.service), o]));
+  const out = [];
+  const orphanKeys = [];
+  for (const row of nextOverrides || []) {
+    const { removeImage, ...clean } = row;
+    const prev = current.get(String(row.service));
+    current.delete(String(row.service));
+    if (prev && removeImage) orphanKeys.push(prev.imageKey);
+    else if (prev) Object.assign(clean, { imageUrl: prev.imageUrl, imageKey: prev.imageKey });
+    if (Object.keys(clean).length > 1) out.push(clean);
+  }
+  // Рядка у формі немає (лише фото без цін) — фото лишається, доки майстер
+  // виконує цю послугу.
+  const allowed = new Set((allowedServiceIds || []).map(String));
+  for (const [id, prev] of current) {
+    if (allowed.has(id)) out.push({ service: prev.service, imageUrl: prev.imageUrl, imageKey: prev.imageKey });
+    else orphanKeys.push(prev.imageKey);
+  }
+  return { overrides: out, orphanKeys };
+}
+
+module.exports = { overrideFor, effectiveService, effectiveServices, validateOverrides, carryImages };

@@ -12,7 +12,7 @@ const { parsePrep } = require('../utils/prepTime');
 const { validateAddonConfig, detachParent } = require('../utils/addons');
 const { getBarberScope } = require('../utils/scope');
 const { canEmployeePerformServices } = require('../utils/employeeServices');
-const { effectiveService } = require('../utils/employeePricing');
+const { effectiveService, overrideFor } = require('../utils/employeePricing');
 
 // Майстер (роль barber) бачить лише свої послуги і свою ціну/тривалість
 // (Employee.services, serviceOverrides). null — адмін, без обмежень;
@@ -78,9 +78,20 @@ router.get('/', async (req, res) => {
     const own = await barberEmployee(req);
     if (own) {
       if (!own.employee) return res.json([]);
+      // own — власні опис і фото майстра окремо (для форми пропозиції змін).
       return res.json(services
         .filter((s) => canEmployeePerformServices(own.employee, [s._id]))
-        .map((s) => effectiveService(s, own.employee)));
+        .map((s) => {
+          const obj = effectiveService(s, own.employee);
+          const o = overrideFor(own.employee, s._id);
+          const tr = o?.descriptionTranslations;
+          obj.own = {
+            description: o?.description || '',
+            descriptionTranslations: tr instanceof Map ? Object.fromEntries(tr) : (tr || {}),
+            imageUrl: o?.imageUrl || '',
+          };
+          return obj;
+        }));
     }
     // Діапазон індивідуальних цін/тривалостей майстрів — для картки послуги.
     const employees = await req.models.Employee.find({ isActive: { $ne: false }, 'serviceOverrides.0': { $exists: true } }).select('serviceOverrides');
