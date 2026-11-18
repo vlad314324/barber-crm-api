@@ -10,6 +10,21 @@ const requireRole = require('../middleware/requireRole');
 const { parseCost } = require('../utils/serviceCost');
 const { parsePrep } = require('../utils/prepTime');
 const { validateAddonConfig, detachParent } = require('../utils/addons');
+const { getBarberScope } = require('../utils/scope');
+const { canEmployeePerformServices } = require('../utils/employeeServices');
+const { effectiveService } = require('../utils/employeePricing');
+
+// Майстер (роль barber) бачить лише свої послуги і свою ціну/тривалість
+// (Employee.services, serviceOverrides). null — адмін, без обмежень;
+// { employee: null } — логін не прив'язаний до майстра.
+async function barberEmployee(req) {
+  const scope = await getBarberScope(req);
+  if (!scope) return null;
+  const employee = scope.employeeId
+    ? await req.models.Employee.findById(scope.employeeId).select('services serviceOverrides')
+    : null;
+  return { employee };
+}
 
 // Собівартість бачить лише адмін.
 const costSelect = (req) => (req.user?.role === 'admin' ? '+cost' : '');
@@ -60,6 +75,13 @@ router.get('/', async (req, res) => {
   const { Service } = req.models;
   try {
     const services = await Service.find().select(costSelect(req)).sort({ category: 1, name: 1 });
+    const own = await barberEmployee(req);
+    if (own) {
+      if (!own.employee) return res.json([]);
+      return res.json(services
+        .filter((s) => canEmployeePerformServices(own.employee, [s._id]))
+        .map((s) => effectiveService(s, own.employee)));
+    }
     // Діапазон індивідуальних цін/тривалостей майстрів — для картки послуги.
     const employees = await req.models.Employee.find({ isActive: { $ne: false }, 'serviceOverrides.0': { $exists: true } }).select('serviceOverrides');
     res.json(services.map((s) => {
@@ -224,7 +246,10 @@ router.get('/:id', async (req, res) => {
   try {
     const service = await Service.findById(req.params.id).select(costSelect(req));
     if (!service) return sendError(res, 404, ERROR_CODES.SERVICE_NOT_FOUND, 'Послугу не знайдено');
-    res.json(service);
+    // Майстру — його ціна/тривалість (послуга може бути в його записі, навіть
+    // якщо її вже прибрали з його списку).
+    const own = await barberEmployee(req);
+    res.json(own?.employee ? effectiveService(service, own.employee) : service);
   } catch (err) {
     handleRouteError(res, err, 'services/get');
   }
