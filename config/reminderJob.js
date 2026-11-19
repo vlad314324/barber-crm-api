@@ -4,6 +4,7 @@ const TelegramLink = require('../models/platform/TelegramLink');
 const { getTenantContext } = require('./tenantDb');
 const { sendReminder, formatEmailDate } = require('./mailer');
 const { sendTelegramMessage } = require('./telegramBot');
+const { wants } = require('./telegramPrefs');
 const ClientTelegramLink = require('../models/platform/ClientTelegramLink');
 const { buildClientMessage } = require('./clientTelegram');
 const { zonedTimeToUtc } = require('../utils/timezone');
@@ -95,6 +96,7 @@ async function runReminderTick(salonsOverride) {
           try {
             const link = await TelegramLink.findOne({ userId: employee.userId, salonId: salon._id, chatId: { $ne: null } });
             if (!link) continue; // не прив'язано — нічого надсилати, ретраїти нема сенсу
+            if (!wants(link, 'reminder2h')) continue; // вимкнено в налаштуваннях
 
             await sendTelegramMessage(
               link.chatId,

@@ -85,7 +85,7 @@ async function claimAndSend(models, salon, day, pending, flag, userIds, groupByE
 
   const { text, markup } = buildNudge(String(salon._id), day, claimed, groupByEmployee);
   const results = [];
-  for (const userId of userIds) results.push(await notifyUserTelegramWithButtons(userId, salon._id, text, markup));
+  for (const userId of userIds) results.push(await notifyUserTelegramWithButtons(userId, salon._id, text, markup, 'statusNudge'));
   if (results.includes('failed') && !results.includes('sent')) {
     await models.Appointment.updateMany({ _id: { $in: claimed.map((a) => a._id) } }, { $set: { [flag]: false } }).catch(() => {});
     return [];

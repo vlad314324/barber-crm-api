@@ -56,13 +56,13 @@ async function birthdayReminders(models, salon, timezone) {
 
   if (fresh.has('admin')) {
     const admins = await models.User.find({ role: 'admin' }).select('_id');
-    admins.forEach((a) => notifyUserTelegram(a._id, salon._id, text(fresh.get('admin'))));
+    admins.forEach((a) => notifyUserTelegram(a._id, salon._id, text(fresh.get('admin')), 'birthdays'));
   }
   const employeeKeys = [...fresh.keys()].filter((k) => k !== 'admin');
   if (employeeKeys.length) {
     const employees = await models.Employee.find({ _id: { $in: employeeKeys } }).select('userId');
     employees.forEach((e) => {
-      if (e.userId) notifyUserTelegram(e.userId, salon._id, text(fresh.get(String(e._id))));
+      if (e.userId) notifyUserTelegram(e.userId, salon._id, text(fresh.get(String(e._id))), 'birthdays');
     });
   }
 }
@@ -116,7 +116,7 @@ async function runTelegramDailySummaryTick(salonsOverride) {
 
       for (const { userId, items } of byEmployee.values()) {
         const lines = items.map((apt) => `${apt.startTime} — ${apt.client?.name || 'клієнт'}`).join('\n');
-        notifyUserTelegram(userId, salon._id, `☀️ Ваша агенда на сьогодні (${items.length}):\n${lines}`);
+        notifyUserTelegram(userId, salon._id, `☀️ Ваша агенда на сьогодні (${items.length}):\n${lines}`, 'dailyAgenda');
       }
 
       // Зведення по всьому салону — усім прив'язаним адмінам, незалежно
@@ -124,7 +124,7 @@ async function runTelegramDailySummaryTick(salonsOverride) {
       const totalRevenue = appointments.reduce((sum, a) => sum + (a.totalPrice || 0), 0);
       const admins = await models.User.find({ role: 'admin' }).select('_id');
       const summaryText = `☀️ Підсумок на сьогодні\nЗаписів: ${appointments.length}\nОчікувана виручка: ${totalRevenue} ${currencyLabel}`;
-      admins.forEach((admin) => notifyUserTelegram(admin._id, salon._id, summaryText));
+      admins.forEach((admin) => notifyUserTelegram(admin._id, salon._id, summaryText, 'dailySummary'));
     } catch (err) {
       console.error(`Telegram daily summary failed for salon ${salon.slug}:`, err);
     }

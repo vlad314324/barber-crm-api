@@ -16,7 +16,7 @@ const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/
 const { servicesCost } = require('../utils/serviceCost');
 const { EMPLOYEE_ORDER, CATEGORY_ORDER } = require('../utils/employeeOrder');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
-const { notifyUserTelegram } = require('../config/telegramBot');
+const { notifyStaffTelegram } = require('../config/telegramBot');
 const { newTgToken, buildClientDeepLink, notifyClientTelegram, isClientLinked } = require('../config/clientTelegram');
 
 const DEFAULT_TIMEZONE = 'Europe/Kyiv';
@@ -526,12 +526,17 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       });
     }
 
-    if (employee.userId) {
+    {
+      // Майстру — його запис; адміністраторам — записи інших майстрів.
       const serviceNames = services.map((s) => s.name).join(', ');
-      notifyUserTelegram(
-        employee.userId, req.tenant.salonId,
-        `📅 Новий запис\nКлієнт: ${clientName} (${clientPhone})\nПослуги: ${serviceNames}\nДата: ${date} ${startTime}`
-      );
+      const body = `Клієнт: ${clientName} (${clientPhone})\nПослуги: ${serviceNames}\nДата: ${date} ${startTime}`;
+      notifyStaffTelegram(req.models, req.tenant.salonId, {
+        employeeUserId: employee.userId,
+        text: `📅 Новий запис\n${body}`,
+        adminText: `📅 Новий запис\nМайстер: ${employee.name || '—'}\n${body}`,
+        kind: 'newBooking',
+        allKind: 'newBookingAll',
+      });
     }
 
     try {

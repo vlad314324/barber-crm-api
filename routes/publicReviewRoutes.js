@@ -4,7 +4,7 @@ const router = express.Router();
 const { ERROR_CODES, sendError, handleRouteError } = require('../utils/errorCodes');
 const { publicBookingLimiter } = require('../middleware/rateLimit');
 const { recalcEmployeeRating, publicClientName } = require('../utils/employeeRating');
-const { notifyUserTelegram } = require('../config/telegramBot');
+const { notifyStaffTelegram } = require('../config/telegramBot');
 
 // Публічні (без автентифікації) ендпоінти відгуків, змонтовані під
 // /api/:salonSlug/booking: одноразове посилання з запрошення після візиту
@@ -78,11 +78,15 @@ router.post('/review/:token', publicBookingLimiter, async (req, res) => {
     await recalcEmployeeRating(req.models, apt.employee._id);
 
     const stars = '⭐'.repeat(rating);
-    if (apt.employee.userId) {
-      notifyUserTelegram(
-        apt.employee.userId, req.tenant.salonId,
-        `${stars} Новий відгук від ${apt.client?.name || 'клієнта'}${text ? `\n«${text}»` : ''}`
-      );
+    {
+      const quote = text ? `\n«${text}»` : '';
+      notifyStaffTelegram(req.models, req.tenant.salonId, {
+        employeeUserId: apt.employee.userId,
+        text: `${stars} Новий відгук від ${apt.client?.name || 'клієнта'}${quote}`,
+        adminText: `${stars} Новий відгук від ${apt.client?.name || 'клієнта'} для ${apt.employee.name || 'майстра'}${quote}`,
+        kind: 'review',
+        allKind: 'reviewAll',
+      });
     }
     await Notification.create({
       type: 'new_review',

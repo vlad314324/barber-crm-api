@@ -11,7 +11,7 @@ const {
 } = require('../utils/excel');
 const { importUpload } = require('../middleware/upload');
 const requireRole = require('../middleware/requireRole');
-const { notifyUserTelegram } = require('../config/telegramBot');
+const { notifyStaffTelegram } = require('../config/telegramBot');
 const { notifyClientTelegram } = require('../config/clientTelegram');
 const { getBarberScope, sameId } = require('../utils/scope');
 const { dayBusy, freeWindowStarts } = require('../utils/freeSlots');
@@ -414,21 +414,28 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Telegram майстру про скасування/перенесення запису з CRM (фоново, не кидає).
+// Telegram про скасування/перенесення запису з CRM: майстру, а
+// адміністраторам — якщо вони ввімкнули події інших майстрів (фоново, не кидає).
 function notifyEmployeeTelegram(req, apt, kind) {
   const { Employee, Client } = req.models;
   (async () => {
     try {
       const [employeeDoc, clientDoc] = await Promise.all([
-        Employee.findById(apt.employee).select('userId'),
+        Employee.findById(apt.employee).select('userId name'),
         Client.findById(apt.client).select('name'),
       ]);
-      if (!employeeDoc?.userId) return;
       const when = `${new Date(apt.date).toLocaleDateString('uk-UA')} ${apt.startTime}`;
-      const text = kind === 'cancelled'
-        ? `❌ Запис скасовано\nКлієнт: ${clientDoc?.name || 'клієнт'}\nБув запланований на: ${when}`
-        : `🔁 Запис перенесено\nКлієнт: ${clientDoc?.name || 'клієнт'}\nНовий час: ${when}`;
-      notifyUserTelegram(employeeDoc.userId, req.tenant.salonId, text);
+      const client = clientDoc?.name || 'клієнт';
+      const [title, timeLine] = kind === 'cancelled'
+        ? ['❌ Запис скасовано', `Був запланований на: ${when}`]
+        : ['🔁 Запис перенесено', `Новий час: ${when}`];
+      notifyStaffTelegram(req.models, req.tenant.salonId, {
+        employeeUserId: employeeDoc?.userId,
+        text: `${title}\nКлієнт: ${client}\n${timeLine}`,
+        adminText: `${title}\nМайстер: ${employeeDoc?.name || '—'}\nКлієнт: ${client}\n${timeLine}`,
+        kind: 'bookingChanged',
+        allKind: 'bookingChangedAll',
+      });
     } catch (notifyErr) {
       console.error('[appointments/update] telegram notify lookup failed:', notifyErr.message);
     }

@@ -8,6 +8,7 @@ const { ERROR_CODES, sendError, firstMissingField, firstNonStringField, handleRo
 const { sendPasswordResetEmail } = require('../config/mailer');
 const { validatePassword } = require('../utils/password');
 const TelegramLink = require('../models/platform/TelegramLink');
+const { resolvePrefs, validatePrefs } = require('../config/telegramPrefs');
 
 const TELEGRAM_LINK_CODE_TTL_MS = 15 * 60 * 1000;
 
@@ -295,10 +296,52 @@ router.get('/telegram-status', verifyToken, async (req, res) => {
   }
 });
 
-// DELETE /api/:salonSlug/auth/telegram-link
+// GET /api/:salonSlug/auth/telegram-prefs — які Telegram-сповіщення отримує
+// цей користувач. sections: own — є картка майстра (свої записи), salon —
+// адміністратор (події всього салону).
+router.get('/telegram-prefs', verifyToken, async (req, res) => {
+  try {
+    const [link, isMaster] = await Promise.all([
+      TelegramLink.findOne({ userId: req.user.id, salonId: req.tenant.salonId }),
+      req.models.Employee.exists({ userId: req.user.id }),
+    ]);
+    res.json({
+      linked: !!(link && link.chatId),
+      prefs: resolvePrefs(link?.prefs),
+      sections: { own: !!isMaster, salon: req.user.role === 'admin' },
+    });
+  } catch (err) {
+    handleRouteError(res, err, 'auth/telegram-prefs');
+  }
+});
+
+// PUT /api/:salonSlug/auth/telegram-prefs — { newBooking: false, ... }
+router.put('/telegram-prefs', verifyToken, async (req, res) => {
+  const { patch, error } = validatePrefs(req.body);
+  if (error) return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, error);
+  try {
+    const $set = Object.fromEntries(Object.entries(patch).map(([k, v]) => [`prefs.${k}`, v]));
+    const link = await TelegramLink.findOneAndUpdate(
+      { userId: req.user.id, salonId: req.tenant.salonId },
+      { $set },
+      { new: true }
+    );
+    if (!link) return sendError(res, 409, ERROR_CODES.VALIDATION_ERROR, 'Спершу підключіть Telegram');
+    res.json({ prefs: resolvePrefs(link.prefs) });
+  } catch (err) {
+    handleRouteError(res, err, 'auth/telegram-prefs');
+  }
+});
+
+// DELETE /api/:salonSlug/auth/telegram-link — відключає чат, але зберігає
+// налаштування сповіщень на випадок повторного підключення. chatId — sparse
+// unique, тому саме $unset, а не null.
 router.delete('/telegram-link', verifyToken, async (req, res) => {
   try {
-    await TelegramLink.deleteOne({ userId: req.user.id, salonId: req.tenant.salonId });
+    await TelegramLink.updateOne(
+      { userId: req.user.id, salonId: req.tenant.salonId },
+      { $unset: { chatId: 1, code: 1 }, $set: { used: false } }
+    );
     res.json({ msg: 'Telegram відключено' });
   } catch (err) {
     handleRouteError(res, err, 'auth/telegram-unlink');

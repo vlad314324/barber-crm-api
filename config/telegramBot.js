@@ -1,4 +1,5 @@
 const TelegramLink = require('../models/platform/TelegramLink');
+const { wants } = require('./telegramPrefs');
 
 // Той самий підхід, що й config/mailer.js: plain fetch, явний дедлайн
 // (AbortSignal.timeout), без SDK-залежності — єдиний HTTP-метод Telegram
@@ -38,24 +39,42 @@ const sendTelegramMessage = (chatId, text, replyMarkup) => callTelegram('sendMes
 // ніколи не кидає — кожен викликач (bookingRoutes.js, reminderJob.js тощо)
 // може просто викликати її без власного .catch(), так само як email-листи
 // викликаються "fire-and-forget", але тут навіть без потреби ланцюжка.
-async function notifyUserTelegram(userId, salonId, text) {
+// kind — ключ налаштувань (config/telegramPrefs.js): вимкнений тип не шлемо.
+async function notifyUserTelegram(userId, salonId, text, kind) {
   if (!process.env.TELEGRAM_BOT_TOKEN) return;
   try {
     const link = await TelegramLink.findOne({ userId, salonId, chatId: { $ne: null } });
-    if (!link) return;
+    if (!link || !wants(link, kind)) return;
     await sendTelegramMessage(link.chatId, text);
   } catch (err) {
     console.error('[telegramBot] notifyUserTelegram failed:', err.message);
   }
 }
 
+// Подія запису майстра: майстру — за особистим ключем (kind), іншим
+// адміністраторам салону — за ключем «…All» (allKind) з текстом adminText.
+// Адміністратор, який сам є цим майстром, отримує одне повідомлення.
+// models — tenant-моделі салону. Ніколи не кидає.
+async function notifyStaffTelegram(models, salonId, { employeeUserId, text, adminText, kind, allKind }) {
+  if (!process.env.TELEGRAM_BOT_TOKEN) return;
+  try {
+    if (employeeUserId) notifyUserTelegram(employeeUserId, salonId, text, kind);
+    const admins = await models.User.find({ role: 'admin' }).select('_id');
+    admins
+      .filter((a) => String(a._id) !== String(employeeUserId || ''))
+      .forEach((a) => notifyUserTelegram(a._id, salonId, adminText || text, allKind));
+  } catch (err) {
+    console.error('[telegramBot] notifyStaffTelegram failed:', err.message);
+  }
+}
+
 // Як notifyUserTelegram, але з клавіатурою і з результатом:
-// 'sent' | 'no_link' (немає токена/прив'язки) | 'failed'.
-async function notifyUserTelegramWithButtons(userId, salonId, text, replyMarkup) {
+// 'sent' | 'no_link' (немає токена/прив'язки або тип вимкнено) | 'failed'.
+async function notifyUserTelegramWithButtons(userId, salonId, text, replyMarkup, kind) {
   if (!process.env.TELEGRAM_BOT_TOKEN) return 'no_link';
   try {
     const link = await TelegramLink.findOne({ userId, salonId, chatId: { $ne: null } });
-    if (!link) return 'no_link';
+    if (!link || !wants(link, kind)) return 'no_link';
     await sendTelegramMessage(link.chatId, text, replyMarkup);
     return 'sent';
   } catch (err) {
@@ -72,5 +91,5 @@ const editMessageReplyMarkup = (chatId, messageId, replyMarkup) =>
   callTelegram('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: replyMarkup });
 
 module.exports = {
-  sendTelegramMessage, notifyUserTelegram, notifyUserTelegramWithButtons, answerCallbackQuery, editMessageReplyMarkup,
+  sendTelegramMessage, notifyUserTelegram, notifyStaffTelegram, notifyUserTelegramWithButtons, answerCallbackQuery, editMessageReplyMarkup,
 };

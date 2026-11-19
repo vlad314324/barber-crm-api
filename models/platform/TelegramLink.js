@@ -20,6 +20,8 @@ const telegramLinkSchema = new mongoose.Schema({
   chatId: { type: Number, unique: true, sparse: true }, // null, доки не прив'язано
   used: { type: Boolean, default: false },
   expiresAt: { type: Date, required: true },
+  // Які сповіщення надсилати (config/telegramPrefs.js); лише змінені значення.
+  prefs: { type: Map, of: Boolean, default: {} },
 }, { timestamps: true });
 
 telegramLinkSchema.index({ userId: 1, salonId: 1 }, { unique: true });
