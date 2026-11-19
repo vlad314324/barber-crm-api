@@ -23,6 +23,10 @@ const DEFAULTS = Object.freeze({
 });
 
 const KEYS = Object.keys(DEFAULTS);
+// Розділи меню (CRM і бот): свої записи — майстру, увесь салон — адміну.
+const OWN_KEYS = ['newBooking', 'bookingChanged', 'reminder2h', 'dailyAgenda', 'review'];
+const SALON_KEYS = ['newBookingAll', 'bookingChangedAll', 'reviewAll', 'dailySummary'];
+const COMMON_KEYS = ['birthdays', 'statusNudge'];
 
 const prefValue = (prefs, key) => {
   const v = prefs instanceof Map ? prefs.get(key) : prefs?.[key];
@@ -47,4 +51,4 @@ function validatePrefs(body) {
   return { patch: Object.fromEntries(entries) };
 }
 
-module.exports = { DEFAULTS, KEYS, wants, resolvePrefs, validatePrefs };
+module.exports = { DEFAULTS, KEYS, OWN_KEYS, SALON_KEYS, COMMON_KEYS, wants, resolvePrefs, validatePrefs };

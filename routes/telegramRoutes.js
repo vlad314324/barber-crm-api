@@ -8,6 +8,7 @@ const { getTenantContext } = require('../config/tenantDb');
 const { T, langOf, langFromTelegram, parseClientPayload, buildClientMessage } = require('../config/clientTelegram');
 const { toZonedInstant } = require('../utils/scheduleWindow');
 const { handleStatusCallback } = require('../config/statusNudgeJob');
+const { sendSettingsMenu, handleSettingsCallback, ensureBotCommands } = require('../config/telegramSettingsMenu');
 
 // Підписка клієнта салону з кнопки на екрані успішного бронювання:
 // /start bk_<salonId><tgToken>. Повертає текст відповіді боту.
@@ -50,10 +51,14 @@ router.post('/webhook', async (req, res) => {
   }
 
   try {
-    // Кнопки «✅ Виконано» / «🚫 Неявка» з вечірнього нагадування.
+    ensureBotCommands();
+    // Кнопки «✅ Виконано» / «🚫 Неявка» з вечірнього нагадування й
+    // перемикачі меню налаштувань (/settings).
     const cq = req.body?.callback_query;
     if (cq) {
-      if (String(cq.data || '').startsWith('st:')) await handleStatusCallback(cq);
+      const data = String(cq.data || '');
+      if (data.startsWith('st:')) await handleStatusCallback(cq);
+      else if (data.startsWith('tp:')) await handleSettingsCallback(cq);
       return res.sendStatus(200);
     }
 
@@ -70,10 +75,18 @@ router.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // Меню налаштувань сповіщень для персоналу.
+    if (/^\/(?:settings|menu)(?:@\w+)?\s*$/.test(text)) {
+      await sendSettingsMenu(chatId);
+      return res.sendStatus(200);
+    }
+
     const match = text.match(/^\/start(?:@\w+)?(?:\s+(\S+))?\s*$/);
     if (!match) return res.sendStatus(200); // інші команди поки не підтримуються
     if (!match[1]) {
-      await sendTelegramMessage(chatId, T[tgLang].welcome).catch(() => {});
+      // Працівник, що вже підключений, — одразу меню налаштувань.
+      if (await TelegramLink.exists({ chatId })) await sendSettingsMenu(chatId);
+      else await sendTelegramMessage(chatId, T[tgLang].welcome).catch(() => {});
       return res.sendStatus(200);
     }
 
@@ -106,7 +119,8 @@ router.post('/webhook', async (req, res) => {
       throw saveErr;
     }
 
-    await sendTelegramMessage(chatId, '✅ Telegram підключено! Тепер сповіщення про записи приходитимуть сюди.').catch(() => {});
+    await sendTelegramMessage(chatId, '✅ Telegram підключено! Тепер сповіщення про записи приходитимуть сюди.\nЩо саме надсилати — оберіть нижче або будь-коли командою /settings.').catch(() => {});
+    await sendSettingsMenu(chatId);
     res.sendStatus(200);
   } catch (err) {
     console.error('[telegram/webhook]', err);

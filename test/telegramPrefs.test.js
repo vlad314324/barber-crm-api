@@ -3,6 +3,7 @@
 // вимикає непотрібні типи через /auth/telegram-prefs.
 // Telegram API підмінено: виклики збираються в масив.
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+process.env.TELEGRAM_WEBHOOK_SECRET = 'test-secret';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -15,7 +16,7 @@ const calls = [];
 const realFetch = global.fetch;
 global.fetch = async (url, opts) => {
   if (String(url).startsWith('https://api.telegram.org/')) {
-    calls.push(JSON.parse(opts.body));
+    calls.push({ ...JSON.parse(opts.body), _m: String(url).split('/').pop() });
     return new Response('{"ok":true}', { status: 200 });
   }
   return realFetch(url, opts);
@@ -48,7 +49,13 @@ const settle = async () => {
     await new Promise((r) => setTimeout(r, 150));
   }
 };
-const to = (who) => calls.filter((c) => c.chat_id === CHAT[who]);
+const to = (who) => calls.filter((c) => c._m === 'sendMessage' && c.chat_id === CHAT[who]);
+const hook = (update) => fetch(`${baseUrl}/telegram/webhook`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': 'test-secret' },
+  body: JSON.stringify(update),
+});
+const msg = (chat, text) => hook({ message: { text, chat: { id: chat }, from: { id: chat, language_code: 'uk' } } });
+const buttons = (m) => m.reply_markup.inline_keyboard.flat();
 
 before(async () => {
   server = await startTestServer();
@@ -164,4 +171,48 @@ test('unlink keeps prefs for the next link', async () => {
   const link = await TelegramLink.findOne({ userId: (await tenant.models.User.findOne({ role: 'admin' }))._id, salonId: tenant.salon._id });
   assert.equal(link.prefs.get('newBookingAll'), false);
   assert.equal(link.chatId, undefined);
+});
+
+test('bot /settings: staff get toggles for their sections, clients get a hint', async () => {
+  calls.length = 0;
+  // Попередній тест відключив адміна — підключаємо знову.
+  const admin = await tenant.models.User.findOne({ role: 'admin' });
+  await TelegramLink.updateOne({ userId: admin._id, salonId: tenant.salon._id }, { $set: { chatId: CHAT.admin, used: true } });
+  assert.equal((await msg(CHAT.b, '/settings')).status, 200);
+  const menuB = to('b').pop();
+  const dataB = buttons(menuB).map((x) => x.callback_data);
+  assert.ok(dataB.includes('tp:newBooking'));
+  assert.ok(!dataB.includes('tp:newBookingAll'), 'a master has no salon section');
+  // Майстер B раніше вимкнув свої нові записи — кнопка показує ⬜️.
+  assert.match(buttons(menuB).find((x) => x.callback_data === 'tp:newBooking').text, /^⬜️/);
+
+  await msg(CHAT.admin, '/start');
+  const dataA = buttons(to('admin').pop()).map((x) => x.callback_data);
+  assert.ok(dataA.includes('tp:newBookingAll') && dataA.includes('tp:newBooking'));
+
+  calls.length = 0;
+  await msg(990999, '/settings');
+  assert.equal(calls.filter((c) => c.chat_id === 990999).length, 1);
+  assert.equal(calls[0].reply_markup, undefined);
+});
+
+test('bot toggle button flips the pref and redraws the keyboard', async () => {
+  calls.length = 0;
+  const cq = (data) => hook({ callback_query: {
+    id: `q${Math.random()}`, data, from: { id: CHAT.b },
+    message: { message_id: 5, chat: { id: CHAT.b } },
+  } });
+  await cq('tp:newBooking');
+  const link = await TelegramLink.findOne({ chatId: CHAT.b });
+  assert.equal(link.prefs.get('newBooking'), true);
+  const edit = calls.find((c) => c._m === 'editMessageReplyMarkup');
+  assert.match(edit.reply_markup.inline_keyboard.flat().find((x) => x.callback_data === 'tp:newBooking').text, /^✅/);
+  assert.match(calls.find((c) => c._m === 'answerCallbackQuery').text, /Увімкнено/);
+
+  // Адмінський пункт майстру недоступний.
+  await cq('tp:newBookingAll');
+  assert.equal((await TelegramLink.findOne({ chatId: CHAT.b })).prefs.get('newBookingAll'), undefined);
+
+  // І в CRM видно те саме.
+  assert.equal((await call('GET', '/auth/telegram-prefs', tokens.b)).body.prefs.newBooking, true);
 });

@@ -95,7 +95,7 @@ test('an invalid payload does not subscribe anyone', async () => {
   sent.length = 0;
   await webhook(`/start bk_${tenant.salon._id}AAAAAAAAAAAAAAAA`);
   assert.equal(await ClientTelegramLink.countDocuments({ chatId: CHAT_ID }), 0);
-  assert.match((await waitFor(() => true)).text, /neplatný/);
+  assert.match((await waitFor((m) => m.chat_id === CHAT_ID)).text, /neplatný/);
 });
 
 test('/start with the payload subscribes the client and sends the confirmation in the booking language', async () => {

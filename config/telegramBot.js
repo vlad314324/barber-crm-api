@@ -91,5 +91,5 @@ const editMessageReplyMarkup = (chatId, messageId, replyMarkup) =>
   callTelegram('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: replyMarkup });
 
 module.exports = {
-  sendTelegramMessage, notifyUserTelegram, notifyStaffTelegram, notifyUserTelegramWithButtons, answerCallbackQuery, editMessageReplyMarkup,
+  callTelegram, sendTelegramMessage, notifyUserTelegram, notifyStaffTelegram, notifyUserTelegramWithButtons, answerCallbackQuery, editMessageReplyMarkup,
 };
