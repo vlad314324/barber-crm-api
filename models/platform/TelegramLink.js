@@ -22,6 +22,8 @@ const telegramLinkSchema = new mongoose.Schema({
   expiresAt: { type: Date, required: true },
   // Які сповіщення надсилати (config/telegramPrefs.js); лише змінені значення.
   prefs: { type: Map, of: Boolean, default: {} },
+  // У чаті вже стоїть кнопка «Налаштування сповіщень» під полем вводу.
+  keyboardShown: { type: Boolean, default: false },
 }, { timestamps: true });
 
 telegramLinkSchema.index({ userId: 1, salonId: 1 }, { unique: true });

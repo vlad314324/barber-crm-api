@@ -8,7 +8,7 @@ const { getTenantContext } = require('../config/tenantDb');
 const { T, langOf, langFromTelegram, parseClientPayload, buildClientMessage } = require('../config/clientTelegram');
 const { toZonedInstant } = require('../utils/scheduleWindow');
 const { handleStatusCallback } = require('../config/statusNudgeJob');
-const { sendSettingsMenu, handleSettingsCallback, ensureBotCommands } = require('../config/telegramSettingsMenu');
+const { sendSettingsMenu, handleSettingsCallback, ensureBotCommands, isSettingsButton } = require('../config/telegramSettingsMenu');
 
 // Підписка клієнта салону з кнопки на екрані успішного бронювання:
 // /start bk_<salonId><tgToken>. Повертає текст відповіді боту.
@@ -76,7 +76,7 @@ router.post('/webhook', async (req, res) => {
     }
 
     // Меню налаштувань сповіщень для персоналу.
-    if (/^\/(?:settings|menu)(?:@\w+)?\s*$/.test(text)) {
+    if (isSettingsButton(text) || /^\/(?:settings|menu)(?:@\w+)?\s*$/.test(text)) {
       await sendSettingsMenu(chatId);
       return res.sendStatus(200);
     }
@@ -105,6 +105,7 @@ router.post('/webhook', async (req, res) => {
 
     try {
       link.chatId = chatId;
+      link.keyboardShown = false; // новий чат — кнопку меню ставимо заново
       link.used = true;
       link.code = undefined; // звільняє sparse unique-слот для майбутніх кодів
       await link.save();

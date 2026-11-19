@@ -340,7 +340,7 @@ router.delete('/telegram-link', verifyToken, async (req, res) => {
   try {
     await TelegramLink.updateOne(
       { userId: req.user.id, salonId: req.tenant.salonId },
-      { $unset: { chatId: 1, code: 1 }, $set: { used: false } }
+      { $unset: { chatId: 1, code: 1 }, $set: { used: false, keyboardShown: false } }
     );
     res.json({ msg: 'Telegram відключено' });
   } catch (err) {

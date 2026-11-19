@@ -60,12 +60,27 @@ function menuText(sections) {
   return lines.join('\n');
 }
 
-// /settings — надсилає меню. Ніколи не кидає.
+// Постійна кнопка під полем вводу — меню без команд. Її натискання
+// надсилає боту цей текст (див. isSettingsButton).
+const SETTINGS_BUTTON = '⚙️ Налаштування сповіщень';
+const STAFF_KEYBOARD = { keyboard: [[{ text: SETTINGS_BUTTON }]], resize_keyboard: true, is_persistent: true };
+const isSettingsButton = (text) => String(text || '').trim() === SETTINGS_BUTTON;
+
+// Кнопку під полем вводу ставимо один раз на чат: повідомлення може мати
+// лише одну клавіатуру, а в меню вона вже inline.
+async function ensureStaffKeyboard(link) {
+  if (link.keyboardShown) return;
+  await sendTelegramMessage(link.chatId, `Меню налаштувань завжди під рукою — кнопка «${SETTINGS_BUTTON}» під полем вводу.`, STAFF_KEYBOARD);
+  await TelegramLink.updateOne({ _id: link._id }, { $set: { keyboardShown: true } });
+}
+
+// /settings або кнопка — надсилає меню. Ніколи не кидає.
 async function sendSettingsMenu(chatId) {
   try {
     const link = await TelegramLink.findOne({ chatId });
     const sections = link && await sectionsFor(link);
     if (!sections) return await sendTelegramMessage(chatId, NOT_STAFF);
+    await ensureStaffKeyboard(link).catch((err) => console.error('[telegramSettings] keyboard failed:', err.message));
     await sendTelegramMessage(chatId, menuText(sections), buildKeyboard(link, sections));
   } catch (err) {
     console.error('[telegramSettings] menu failed:', err.message);
@@ -113,4 +128,4 @@ function ensureBotCommands() {
   });
 }
 
-module.exports = { sendSettingsMenu, handleSettingsCallback, ensureBotCommands, buildKeyboard, LABELS };
+module.exports = { sendSettingsMenu, handleSettingsCallback, ensureBotCommands, buildKeyboard, isSettingsButton, LABELS, SETTINGS_BUTTON };

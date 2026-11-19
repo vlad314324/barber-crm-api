@@ -216,3 +216,22 @@ test('bot toggle button flips the pref and redraws the keyboard', async () => {
   // І в CRM видно те саме.
   assert.equal((await call('GET', '/auth/telegram-prefs', tokens.b)).body.prefs.newBooking, true);
 });
+
+test('persistent «Налаштування» button opens the menu; the keyboard is set once per chat', async () => {
+  const { SETTINGS_BUTTON } = require('../config/telegramSettingsMenu');
+  // Кнопку вже поставили під час попередніх /settings.
+  assert.equal((await TelegramLink.findOne({ chatId: CHAT.b })).keyboardShown, true);
+  calls.length = 0;
+  await msg(CHAT.b, SETTINGS_BUTTON);
+  const out = to('b');
+  assert.equal(out.length, 1, 'only the menu, no second keyboard message');
+  assert.ok(out[0].reply_markup.inline_keyboard);
+
+  // Новий чат після перепідключення — кнопку ставимо знову.
+  await TelegramLink.updateOne({ chatId: CHAT.b }, { $set: { keyboardShown: false } });
+  calls.length = 0;
+  await msg(CHAT.b, '/settings');
+  const [kb, menu] = to('b');
+  assert.deepEqual(kb.reply_markup.keyboard, [[{ text: SETTINGS_BUTTON }]]);
+  assert.ok(menu.reply_markup.inline_keyboard);
+});
