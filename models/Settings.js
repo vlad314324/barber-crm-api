@@ -96,6 +96,12 @@ const SettingsSchema = new mongoose.Schema({
     sendTime: { type: String, default: '10:00' },
     message: { type: String, default: '' },
   },
+  // Останні значення форми «Запропонувати знижку» (картка клієнта).
+  discountOfferDefaults: {
+    discountPercent: { type: Number, default: 10 },
+    validDays: { type: Number, default: 14 },
+    message: { type: String, default: '' },
+  },
 }, { timestamps: true });
 
 module.exports = SettingsSchema;

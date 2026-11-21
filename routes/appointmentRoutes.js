@@ -445,7 +445,7 @@ function notifyEmployeeTelegram(req, apt, kind) {
 // Поля, що переходять зі старого запису в новий при перенесенні; решту
 // (прапорці нагадувань, відгук) новий запис отримує за замовчуванням.
 const RESCHEDULE_COPY = ['client', 'employee', 'services', 'totalDuration', 'prepTime', 'totalPrice', 'totalCost',
-  'discountPercent', 'priceBeforeDiscount', 'birthdayGreeting', 'preferredLang', 'source', 'tgToken'];
+  'discountPercent', 'priceBeforeDiscount', 'birthdayGreeting', 'discountOffer', 'preferredLang', 'source', 'tgToken'];
 const RESCHEDULE_FROM_BODY = ['client', 'employee', 'services', 'date', 'startTime', 'totalDuration', 'prepTime',
   'totalPrice', 'totalCost', 'preferredLang'];
 
@@ -491,6 +491,9 @@ async function splitReschedule(req, existing) {
     if (old.birthdayGreeting) {
       await req.models.BirthdayGreeting.updateOne({ promoAppointment: old._id }, { $set: { promoAppointment: fresh._id } }).catch(() => {});
     }
+    if (old.discountOffer) {
+      await req.models.DiscountOffer.updateOne({ promoAppointment: old._id }, { $set: { promoAppointment: fresh._id } }).catch(() => {});
+    }
     return { appointment: fresh };
   });
 }
@@ -534,6 +537,7 @@ router.put('/:id', async (req, res) => {
     delete req.body.discountPercent;
     delete req.body.priceBeforeDiscount;
     delete req.body.birthdayGreeting;
+    delete req.body.discountOffer;
     delete req.body.totalCost;
     delete req.body.rescheduledFrom;
     delete req.body.rescheduledTo;
@@ -637,10 +641,13 @@ router.put('/:id', async (req, res) => {
     // редагування шле date/startTime завжди, навіть при зміні статусу).
     const clientRescheduled = justRescheduled && updated.status !== 'Cancelled'
       && (dayKey(existing.date) !== dayKey(updated.date) || existing.startTime !== updated.startTime);
-    // Скасований запис звільняє знижку до дня народження — клієнт може
-    // скористатися посиланням з привітання ще раз.
+    // Скасований запис звільняє знижку (до ДН чи персональну) — клієнт може
+    // скористатися посиланням ще раз.
     if (justCancelled && updated.birthdayGreeting) {
       await req.models.BirthdayGreeting.updateOne({ promoAppointment: updated._id }, { $set: { promoAppointment: null } }).catch(() => {});
+    }
+    if (justCancelled && updated.discountOffer) {
+      await req.models.DiscountOffer.updateOne({ promoAppointment: updated._id }, { $set: { promoAppointment: null } }).catch(() => {});
     }
     if (justCancelled || clientRescheduled) {
       notifyClientTelegram(req.models, req.tenant, updated._id, justCancelled ? 'cancelled' : 'rescheduled');
@@ -704,6 +711,9 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     await appointment.deleteOne();
     if (appointment.birthdayGreeting) {
       await req.models.BirthdayGreeting.updateOne({ promoAppointment: appointment._id }, { $set: { promoAppointment: null } }).catch(() => {});
+    }
+    if (appointment.discountOffer) {
+      await req.models.DiscountOffer.updateOne({ promoAppointment: appointment._id }, { $set: { promoAppointment: null } }).catch(() => {});
     }
     res.json({ msg: 'Appointment removed' });
   } catch (err) {

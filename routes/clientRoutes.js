@@ -10,7 +10,8 @@ const { normalizeInstagram, parseBirthday } = require('../utils/clientFields');
 const { todayInZone, upcomingBirthdays, nextOccurrence } = require('../utils/birthdays');
 const { TIME_RE, toZonedInstant } = require('../utils/scheduleWindow');
 const { deliverGreeting } = require('../config/birthdayGreeting');
-const { newPromoToken } = require('../utils/birthdayPromo');
+const { newPromoToken, promoWindow } = require('../utils/birthdayPromo');
+const { deliverOffer } = require('../config/discountOffer');
 const ClientTelegramLink = require('../models/platform/ClientTelegramLink');
 
 const CLIENT_EXPORT_COLUMNS = [
@@ -385,6 +386,123 @@ router.delete('/:id/birthday-greeting', requireRole('admin'), async (req, res) =
     res.json(greeting);
   } catch (err) {
     handleRouteError(res, err, 'clients/birthdayGreetingCancel');
+  }
+});
+
+// --- Персональна знижка з картки клієнта (models/DiscountOffer.js) ---
+
+const OFFER_CHANNELS = ['email', 'telegram'];
+
+// Стан пропозиції для CRM: active | used | expired | cancelled | failed.
+function offerView(offer, today) {
+  const { until } = promoWindow(offer);
+  let state = offer.status;
+  if (offer.status === 'sent') state = offer.promoAppointment ? 'used' : (today > until ? 'expired' : 'active');
+  if (offer.status === 'sending') state = 'failed';
+  return {
+    _id: offer._id,
+    discountPercent: offer.discountPercent,
+    validDays: offer.validDays,
+    validFrom: offer.validFrom,
+    validUntil: until,
+    message: offer.message,
+    channels: offer.channels,
+    state,
+    createdBy: offer.createdBy,
+    sentAt: offer.sentAt,
+    createdAt: offer.createdAt,
+  };
+}
+
+// GET /clients/:id/discount-offers — доступні канали, останні значення
+// форми й історія персональних знижок клієнта.
+router.get('/:id/discount-offers', requireRole('admin'), async (req, res) => {
+  const { Client, Settings, DiscountOffer } = req.models;
+  try {
+    const client = await Client.findById(req.params.id).select('email');
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    const [settings, telegramLinked, offers] = await Promise.all([
+      Settings.findOne().select('timezone discountOfferDefaults'),
+      ClientTelegramLink.exists({ salonId: req.tenant.salonId, clientId: client._id, active: true }),
+      DiscountOffer.find({ client: client._id }).sort({ createdAt: -1 }).limit(20),
+    ]);
+    const today = todayInZone(settings?.timezone || 'Europe/Kyiv');
+    const d = settings?.discountOfferDefaults || {};
+    res.json({
+      hasEmail: !!client.email,
+      telegramLinked: !!telegramLinked,
+      defaults: { discountPercent: d.discountPercent ?? 10, validDays: d.validDays ?? 14, message: d.message || '' },
+      offers: offers.map((o) => offerView(o, today)),
+    });
+  } catch (err) {
+    handleRouteError(res, err, 'clients/discountOffers');
+  }
+});
+
+// POST /clients/:id/discount-offer — одразу надіслати клієнту персональну
+// знижку на обрані канали з одноразовим посиланням на бронювання. Термін
+// рахується від сьогодні (за таймзоною салону) і стосується дати візиту.
+router.post('/:id/discount-offer', requireRole('admin'), async (req, res) => {
+  const { Client, Settings, DiscountOffer, User } = req.models;
+  const discountPercent = Number(req.body.discountPercent);
+  const validDays = Number(req.body.validDays);
+  const message = typeof req.body.message === 'string' ? req.body.message.trim().slice(0, 300) : '';
+  const requested = Array.isArray(req.body.channels) ? req.body.channels : [];
+  if (!Number.isInteger(discountPercent) || discountPercent < 1 || discountPercent > 90) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Знижка має бути від 1 до 90%', { field: 'discountPercent' });
+  }
+  if (!Number.isInteger(validDays) || validDays < 1 || validDays > 90) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Термін дії — від 1 до 90 днів', { field: 'validDays' });
+  }
+  if (!requested.length || requested.some((c) => !OFFER_CHANNELS.includes(c))) {
+    return sendError(res, 400, ERROR_CODES.VALIDATION_ERROR, 'Оберіть, куди надіслати знижку', { field: 'channels' });
+  }
+  try {
+    const client = await Client.findById(req.params.id);
+    if (!client) return sendError(res, 404, ERROR_CODES.CLIENT_NOT_FOUND, 'Клієнта не знайдено');
+    const telegramLinked = !!(await ClientTelegramLink.exists({ salonId: req.tenant.salonId, clientId: client._id, active: true }));
+    const wanted = {
+      email: requested.includes('email') && !!client.email,
+      telegram: requested.includes('telegram') && telegramLinked,
+    };
+    if (!wanted.email && !wanted.telegram) {
+      return sendError(res, 400, ERROR_CODES.CLIENT_NO_CONTACT_CHANNEL, 'Обраний канал недоступний для цього клієнта');
+    }
+
+    const settings = (await Settings.findOne()) || await Settings.create({});
+    const author = await User.findById(req.user.id).select('name');
+    const offer = await DiscountOffer.create({
+      client: client._id, discountPercent, validDays, message,
+      validFrom: todayInZone(settings.timezone || 'Europe/Kyiv'),
+      status: 'sending', createdBy: author?.name, promoToken: newPromoToken(),
+    });
+    settings.discountOfferDefaults = { discountPercent, validDays, message };
+    await settings.save();
+
+    const delivered = await deliverOffer(req.models, req.tenant, offer, wanted);
+    res.status(201).json(offerView(delivered, delivered.validFrom));
+  } catch (err) {
+    handleRouteError(res, err, 'clients/discountOffer');
+  }
+});
+
+// DELETE /clients/:id/discount-offers/:offerId — скасувати ще не
+// використану знижку: посилання з повідомлення перестає діяти.
+router.delete('/:id/discount-offers/:offerId', requireRole('admin'), async (req, res) => {
+  const { DiscountOffer, Settings } = req.models;
+  try {
+    const offer = await DiscountOffer.findOne({ _id: req.params.offerId, client: req.params.id });
+    if (!offer) return sendError(res, 404, ERROR_CODES.NOT_FOUND, 'Знижку не знайдено');
+    const cancelled = await DiscountOffer.findOneAndUpdate(
+      { _id: offer._id, status: 'sent', promoAppointment: null },
+      { $set: { status: 'cancelled' } },
+      { new: true }
+    );
+    if (!cancelled) return sendError(res, 409, ERROR_CODES.PROMO_NOT_CANCELLABLE, 'Цю знижку вже використано або скасовано');
+    const settings = await Settings.findOne().select('timezone');
+    res.json(offerView(cancelled, todayInZone(settings?.timezone || 'Europe/Kyiv')));
+  } catch (err) {
+    handleRouteError(res, err, 'clients/discountOfferCancel');
   }
 });
 

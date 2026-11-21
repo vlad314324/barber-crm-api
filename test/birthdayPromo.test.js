@@ -69,7 +69,7 @@ const book = (date, startTime, extra = {}) => req('POST', '/booking', {
 test('the public gift endpoint returns the discount and its term', async () => {
   const res = await req('GET', `/booking/gift/${TOKEN}`);
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { discountPercent: 20, validFrom: today, validUntil: addDays(today, 9), firstName: 'Olena', used: false });
+  assert.deepEqual(res.body, { kind: 'birthday', discountPercent: 20, validFrom: today, validUntil: addDays(today, 9), firstName: 'Olena', used: false });
   assert.equal((await req('GET', '/booking/gift/unknownTokenXXXXXXXXXX')).status, 404);
 });
 

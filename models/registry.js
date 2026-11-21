@@ -14,8 +14,9 @@ const IdempotencyKey = require('./IdempotencyKey');
 const EmployeeBreak = require('./EmployeeBreak');
 const BirthdayGreeting = require('./BirthdayGreeting');
 const ServiceChangeRequest = require('./ServiceChangeRequest');
+const DiscountOffer = require('./DiscountOffer');
 
-const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession, IdempotencyKey, EmployeeBreak, BirthdayGreeting, ServiceChangeRequest };
+const schemas = { Client, Employee, Service, Category, Appointment, Review, Settings, User, Notification, AppointmentLock, AnalyticsEvent, CrmSession, IdempotencyKey, EmployeeBreak, BirthdayGreeting, ServiceChangeRequest, DiscountOffer };
 
 function getModels(connection) {
   const models = {};

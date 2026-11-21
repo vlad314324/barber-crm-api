@@ -12,7 +12,7 @@ const { withEmployeeDayLock } = require('../utils/appointmentLock');
 const { TIME_RE, parseCalendarDate, weekdayOf, effectiveWindow, isBeyondBookingHorizon, bookingLeadMinutes, bookingTimeIssue, salonOpenOn } = require('../utils/scheduleWindow');
 const { publicBookingLimiter, analyticsEventLimiter } = require('../middleware/rateLimit');
 const mongoose = require('mongoose');
-const { findPromo, checkPromo, promoWindow, applyDiscount } = require('../utils/birthdayPromo');
+const { findPromo, checkPromo, promoWindow, applyDiscount, promoModel, promoRefField } = require('../utils/birthdayPromo');
 const { servicesCost } = require('../utils/serviceCost');
 const { EMPLOYEE_ORDER, CATEGORY_ORDER } = require('../utils/employeeOrder');
 const { EVENT_TYPES } = require('../models/AnalyticsEvent');
@@ -100,8 +100,9 @@ router.get('/settings', async (req, res) => {
   }
 });
 
-// GET /api/:salonSlug/booking/gift/:token — знижка до дня народження за
-// персональним посиланням з привітання (?gift=...). Сторінка бронювання
+// GET /api/:salonSlug/booking/gift/:token — знижка за персональним
+// посиланням (?gift=...): з привітання з ДН (kind: 'birthday') чи
+// персональна з картки клієнта (kind: 'personal'). Сторінка бронювання
 // показує банер і ціни зі знижкою; сама знижка перевіряється ще раз при
 // бронюванні (дата візиту, телефон, одноразовість).
 router.get('/gift/:token', async (req, res) => {
@@ -111,6 +112,7 @@ router.get('/gift/:token', async (req, res) => {
     const client = await req.models.Client.findById(greeting.client).select('name');
     const { from, until } = promoWindow(greeting);
     res.json({
+      kind: greeting.promoKind,
       discountPercent: greeting.discountPercent,
       validFrom: from,
       validUntil: until,
@@ -395,8 +397,8 @@ router.post('/', publicBookingLimiter, async (req, res) => {
       return sendError(res, 400, ERROR_CODES.BOOKING_TOO_SOON, `Онлайн-запис можливий не пізніше ніж за ${minLeadMinutes} хв до візиту`, { field: 'startTime', minLeadMinutes });
     }
 
-    // Знижка до дня народження (посилання з привітання): дата візиту в
-    // межах терміну, телефон — клієнта-іменинника, ще не використана.
+    // Знижка за персональним посиланням (привітання з ДН чи персональна):
+    // дата візиту в межах терміну, телефон — цього клієнта, ще не використана.
     let promo = null;
     if (giftToken !== undefined && giftToken !== null && giftToken !== '') {
       const check = await checkPromo(req.models, giftToken, { date, phone: clientPhone });
@@ -416,7 +418,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     const totalCost     = await servicesCost(req.models, serviceIds);
     const totalPriceMax = promo ? applyDiscount(fullPriceMax, discountPercent) : fullPriceMax;
 
-    // Зі знижкою запис іде саме на клієнта-іменинника (телефон уже звірено).
+    // Зі знижкою запис іде саме на клієнта, якому її надіслано (телефон уже звірено).
     let client = promo ? await Client.findById(promo.client) : await Client.findOne({ phone: clientPhone });
     if (!client) {
       client = await Client.create({ name: clientName, phone: clientPhone, email: clientEmail || '' });
@@ -426,14 +428,14 @@ router.post('/', publicBookingLimiter, async (req, res) => {
     // запису; якщо запис не створиться (слот зайнятий тощо) — звільняємо.
     const appointmentId = new mongoose.Types.ObjectId();
     if (promo) {
-      const claimed = await req.models.BirthdayGreeting.findOneAndUpdate(
+      const claimed = await promoModel(req.models, promo).findOneAndUpdate(
         { _id: promo._id, promoAppointment: null },
         { $set: { promoAppointment: appointmentId } }
       );
       if (!claimed) return sendError(res, 409, ERROR_CODES.PROMO_ALREADY_USED, 'Цю знижку вже використано');
     }
     const releasePromo = () => (promo
-      ? req.models.BirthdayGreeting.updateOne({ _id: promo._id, promoAppointment: appointmentId }, { $set: { promoAppointment: null } }).catch(() => {})
+      ? promoModel(req.models, promo).updateOne({ _id: promo._id, promoAppointment: appointmentId }, { $set: { promoAppointment: null } }).catch(() => {})
       : Promise.resolve());
 
     // Атомарне резервування: лок на (майстер, день) гарантує, що перевірка
@@ -459,7 +461,7 @@ router.post('/', publicBookingLimiter, async (req, res) => {
           preferredLang,
           source: 'public',
           tgToken: newTgToken(),
-          ...(promo ? { discountPercent, priceBeforeDiscount: fullPrice, birthdayGreeting: promo._id } : {}),
+          ...(promo ? { discountPercent, priceBeforeDiscount: fullPrice, [promoRefField(promo)]: promo._id } : {}),
         });
         return { conflict: null, appointment: created };
       });

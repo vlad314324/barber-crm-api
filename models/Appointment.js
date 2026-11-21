@@ -91,6 +91,8 @@ const appointmentSchema = new mongoose.Schema({
   totalCost: { type: Number, select: false },
   priceBeforeDiscount: { type: Number },
   birthdayGreeting: { type: mongoose.Schema.Types.ObjectId, ref: 'BirthdayGreeting' },
+  // Персональна знижка з картки клієнта (models/DiscountOffer.js).
+  discountOffer: { type: mongoose.Schema.Types.ObjectId, ref: 'DiscountOffer' },
   // Перенесення (routes/appointmentRoutes.js PUT /:id): старий запис лишається
   // «Перенесено» на старому часі й посилається на новий (rescheduledTo), новий
   // «Заплановано» — на старий (rescheduledFrom). Так у статистиці видно і перенос,

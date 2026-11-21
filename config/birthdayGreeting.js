@@ -161,4 +161,4 @@ async function deliverGreeting(models, salon, greeting) {
   );
 }
 
-module.exports = { buildGreeting, deliverGreeting, clientLang };
+module.exports = { buildGreeting, deliverGreeting, clientLang, bookingUrl, firstName, esc };
